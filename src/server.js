@@ -50,6 +50,8 @@ const skills = require('./skills')({ dataDir: DATA_DIR, accounts });
 const worktrees = require('./worktrees')({ dataDir: DATA_DIR });
 const conversations = require('./conversations')({ accounts });
 const usage = require('./usage')({ accounts });
+const github = require('./github')({ settings: appSettings });
+const siteIcons = require('./site-icons')({ dataDir: DATA_DIR });
 const agentById = (id) => accounts.get(id);
 const agentsPayload = () => accounts.list().map(accounts.publicAgent);
 const broadcastAgents = () => { broadcastAll({ type: 'agents', agents: agentsPayload() }); broadcastConnectors(); };
@@ -986,7 +988,7 @@ app.get('/api/app', (_req, res) => {
 });
 app.patch('/api/app/settings', (req, res) => {
   const allowed = {};
-  for (const k of ['updateChannel', 'onboarded', 'autoSwitch']) if (k in (req.body || {})) allowed[k] = req.body[k];
+  for (const k of ['updateChannel', 'onboarded', 'autoSwitch', 'projectsDir']) if (k in (req.body || {})) allowed[k] = req.body[k];
   res.json(appSettings.set(allowed));
 });
 app.post('/api/app/check-tools', async (_req, res) => res.json(await checkToolFixes()));
@@ -1092,6 +1094,32 @@ function importConversation(s, ref) {
   broadcast(s.id, { type: 'reload' });
   return { importId, count: c.msgs.length, head: head.id };
 }
+// ---------- GitHub: start a session from a repository ----------
+app.get('/api/github/status', async (_req, res) => res.json(await github.status()));
+app.get('/api/github/repos', async (_req, res) => { try { res.json(await github.repos()); } catch (e) { res.status(400).json({ error: e.message }); } });
+app.post('/api/github/clone', async (req, res) => {
+  try { res.json(await github.clone((req.body || {}).repo, (req.body || {}).parent)); }
+  catch (e) { res.status(400).json({ error: e.message, code: e.code || null }); }
+});
+// Opens a terminal window that signs you in to GitHub (and installs the GitHub CLI if needed).
+app.post('/api/github/signin', async (_req, res) => {
+  const st = await github.status();
+  const login = 'gh auth login --hostname github.com --git-protocol https --web && gh auth setup-git';
+  const hasBrew = !IS_WIN && !!run('which', ['brew']);
+  if (!st.gh && !IS_WIN && !hasBrew) return res.json({ docs: 'https://cli.github.com', message: 'Install the GitHub CLI from cli.github.com, then click Sign in to GitHub again.' });
+  const sh = st.gh ? login : `brew install gh && ${login}`;
+  const ps = st.gh ? login.replace('&&', ';') : `winget install --id GitHub.cli -e --source winget; $env:Path += ';C:\\Program Files\\GitHub CLI'; ${login.replace('&&', ';')}`;
+  accounts.openCommand('github-signin', { sh, ps, banner: 'Sign in to GitHub for AgentsCircle', hint: 'Follow the steps: copy the one-time code, press Enter, and approve in your browser.' });
+  res.json({ opened: true });
+});
+
+// A connector's official icon (from its website, cached). SVGs are served as images only.
+app.get('/api/site-icon/:site', async (req, res) => {
+  const icon = await siteIcons.get(req.params.site).catch(() => null);
+  if (!icon) return res.status(404).end();
+  res.set({ 'Content-Type': icon.type, 'Cache-Control': 'public, max-age=86400', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'X-Content-Type-Options': 'nosniff' });
+  res.send(icon.buf);
+});
 app.get('/api/attention', (_req, res) => res.json(attention()));
 app.get('/api/usage', (_req, res) => { try { res.json(usage.all()); } catch (e) { res.status(500).json({ error: e.message }); } });
 app.get('/api/conversations', (req, res) => {

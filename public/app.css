@@ -279,7 +279,8 @@ header .title { font-weight: 650; font-size: 15px; letter-spacing: -0.01em; whit
 header .folder { color: var(--muted); font-family: var(--mono); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46ch; direction: rtl; text-align: left; }
 header .tools { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 header .tools .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
-header .tools button { min-height: 30px; }
+header .tools button { min-height: 30px; white-space: nowrap; }
+@media (max-width: 1360px) { body.panel-open header .tools #modeBtn .lbl, body.panel-open header .tools #handoffBtn .lbl { display: none; } }
 header .tools button .lbl { font-size: 12.5px; }
 #modeBtn.parallel { color: var(--accent); }
 #handoffBtn.on { color: var(--text); }
@@ -604,6 +605,10 @@ pre.src, .diff { background: var(--code-bg); border: 1px solid var(--line); bord
 .row-s .ctl { flex: none; }
 .seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r); }
 .seg button { border: none; background: transparent; min-height: 26px; padding: 0 10px; font-size: 12.5px; color: var(--muted); border-radius: 6px; }
+.ghstat { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; margin-top: 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel2); font-size: 13px; }
+.ghstat .ic { width: 16px; height: 16px; } .ghstat .sp { flex: 1; } .ghstat button { min-height: 28px; font-size: 12.5px; }
+.repo .t { display: flex; gap: 8px; align-items: center; min-width: 0; } .repo .t b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.repo .lk { font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); flex: none; }
 .seg button.on { background: var(--raised); color: var(--text); box-shadow: var(--shadow-sm); }
 .themegrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
 .themecard { padding: 0; min-height: 0; display: block; border-radius: var(--r-md); overflow: hidden; border: 1.5px solid var(--line); background: var(--panel); text-align: left; }
@@ -651,6 +656,10 @@ section.addacct h3 { font-size: 14px !important; }
 .upbox { border: 1px solid var(--line); border-radius: var(--r-md); padding: 14px; background: var(--panel); margin-bottom: 10px; }
 .crow.disabled { opacity: .6; }
 .cicon { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); display: grid; place-items: center; font: 700 11px/1 var(--font-cond); letter-spacing: .04em; color: var(--text-2); flex: none; }
+.cicon { position: relative; overflow: hidden; }
+.cicon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; padding: 4px; background: #fff; }
+.cicon.sm img { padding: 2px; }
+.cicon.has-img { border-color: var(--line-2); }
 .cicon.sm { width: 22px; height: 22px; border-radius: 6px; font-size: 9px; display: inline-grid; margin-right: 8px; vertical-align: middle; }
 .cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
 .ccard { border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px; background: var(--panel); display: flex; flex-direction: column; gap: 4px; }
@@ -687,6 +696,13 @@ body.side-right { flex-direction: row-reverse; }
 body.side-right aside { border-right: none; border-left: 1px solid var(--line); }
 body.side-right #panel { order: -1; border-left: none; border-right: 1px solid var(--line); }
 body.side-hidden aside { display: none; }
+/* Show-sidebar button: always reachable while the sidebar is hidden, with or without a session open. */
+#sideShow { position: fixed; top: 11px; left: 12px; z-index: 30; -webkit-app-region: no-drag; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+body.side-right #sideShow { left: auto; right: 12px; }
+body.mac-desktop #sideShow { left: 84px; top: 11px; }
+body.mac-desktop.side-right #sideShow { left: auto; right: 12px; }
+body.side-hidden:not(.side-right) header { padding-left: 60px; }
+body.side-hidden.side-right header { padding-right: 60px; }
 body.panel-bottom { display: grid; grid-template-columns: auto 1fr; grid-template-rows: 1fr auto; }
 body.panel-bottom aside { grid-row: 1 / 3; }
 body.panel-bottom main { grid-column: 2; grid-row: 1; min-height: 0; }
@@ -725,6 +741,7 @@ body.chat-wide { --chat-w: 1200px; }
 }
 .upbox .logo-mark, .card h3 + .logo-mark, #setupCard .logo-mark { width: 28px; height: 28px; flex: none; }
 /* macOS desktop: window buttons sit at the top left of the window */
-body.mac-desktop.side-hidden header, body.mac-desktop.side-right header { padding-left: 88px; }
+body.mac-desktop.side-hidden:not(.side-right) header { padding-left: 128px; }
+body.mac-desktop.side-hidden.side-right header, body.mac-desktop.side-right header { padding-left: 88px; }
 body.mac-desktop.side-right .brand { padding-left: 16px; }
 body.mac-desktop .phead { -webkit-app-region: drag; } body.mac-desktop .phead > * { -webkit-app-region: no-drag; }

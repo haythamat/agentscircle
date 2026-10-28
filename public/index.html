@@ -36,8 +36,8 @@
 </aside>
 
 <main>
+  <button class="ghost ib" id="sideShow" data-tip="Show sidebar  ⌘B" aria-label="Show sidebar" style="display:none"></button>
   <header id="header" style="display:none">
-    <button class="ghost ib" id="sideShow" data-tip="Show sidebar  ⌘B" style="display:none"></button>
     <div class="titles">
       <div class="title" id="sTitle"></div>
       <div class="folder" id="sFolder"></div>
@@ -83,9 +83,21 @@
   <div class="card">
     <h3>New session</h3>
     <p class="lead">A session is one circle: a project folder, the agents you bring in, and one shared conversation.</p>
-    <label for="fFolder">Project folder</label>
-    <input id="fFolder" placeholder="/Users/you/projects/my-app" />
-    <div class="hint">Full path. In Finder, hold Option, right-click the folder, then Copy as Pathname. On Windows: Shift + right-click, Copy as path.</div>
+    <div class="seg" id="fSource" role="tablist" aria-label="Where the project is" style="margin:4px 0 2px"><button class="on" data-src="local" role="tab">Folder on this computer</button><button data-src="github" role="tab">GitHub repository</button></div>
+    <div id="fLocal">
+      <label for="fFolder">Project folder</label>
+      <input id="fFolder" placeholder="/Users/you/projects/my-app" />
+      <div class="hint">Full path. In Finder, hold Option, right-click the folder, then Copy as Pathname. On Windows: Shift + right-click, Copy as path.</div>
+    </div>
+    <div id="fGit" style="display:none">
+      <div class="ghstat" id="ghStat"><span class="hint" style="margin:0">Checking GitHub…</span></div>
+      <label for="ghRepo">Repository</label>
+      <input id="ghRepo" placeholder="https://github.com/owner/name or owner/name" autocomplete="off" spellcheck="false" />
+      <div class="convlist" id="ghList" style="display:none"></div>
+      <label for="ghParent">Save in</label>
+      <input id="ghParent" placeholder="/Users/you/Projects" />
+      <div class="hint" id="ghWhere">AgentsCircle downloads the repository into this folder (or uses your copy if it's already there), and the session works in that copy.</div>
+    </div>
     <label for="fName">Name <span class="hint" style="font-weight:400">optional</span></label>
     <input id="fName" placeholder="Landing page redesign" />
     <label>Agents</label>
@@ -738,6 +750,7 @@ $('aAdd').onclick = async () => {
 <script src="/connectors.js"></script>
 <script src="/collab.js"></script>
 <script src="/desktop.js"></script>
+<script src="/github.js"></script>
 <script src="/look.js"></script>
 </body>
 </html>

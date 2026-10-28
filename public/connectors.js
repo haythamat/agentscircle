@@ -5,6 +5,14 @@ const conn = { list: [], catalog: [], addTab: 'popular', form: null, editing: nu
 
 const AUTH_LABEL = { oauth: 'Sign-in (OAuth)', token: 'Token', none: 'No sign-in' };
 const initials = (t) => (t || '?').replace(/[^a-z0-9]/gi, '').slice(0, 2).toUpperCase();
+// The connector's official icon from its website (cached by AgentsCircle); the letters stay
+// underneath and show if there's no icon.
+function connIcon(c, size) {
+  const site = c && c.site;
+  return `<span class="cicon${size ? ' ' + size : ''}">${esc(initials(c.title || c.name || '?'))}${site ? `<img src="/api/site-icon/${encodeURIComponent(site)}" alt="" loading="lazy" decoding="async">` : ''}</span>`;
+}
+document.addEventListener('error', (e) => { if (e.target && e.target.matches && e.target.matches('.cicon img')) e.target.remove(); }, true);
+document.addEventListener('load', (e) => { if (e.target && e.target.matches && e.target.matches('.cicon img')) e.target.parentNode.classList.add('has-img'); }, true);
 const linesToMap = (text, sep) => Object.fromEntries(String(text || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => { const i = l.indexOf(sep); return i < 0 ? [l, ''] : [l.slice(0, i).trim(), l.slice(i + 1).trim()]; }));
 const mapToLines = (m, sep) => Object.entries(m || {}).map(([k, v]) => `${k}${sep}${v}`).join('\n');
 
@@ -36,7 +44,7 @@ function renderConnectors() {
   if ($('cfName')) { try { conn.form = { ...(conn.form || {}), ...readForm() }; } catch { /* ignore */ } }
   const signable = (c) => c.type === 'remote' && c.auth === 'oauth';
   const rows = conn.list.map((c) => `<div class="acctrow crow ${c.enabled ? '' : 'disabled'}" data-name="${esc(c.name)}">
-    <div style="display:flex;gap:10px;min-width:0"><span class="cicon">${esc(initials(c.title || c.name))}</span>
+    <div style="display:flex;gap:10px;min-width:0">${connIcon(c)}
       <div style="min-width:0"><div class="h">${esc(c.title || c.name)} <span class="hint" style="margin:0;font-weight:400">${esc(c.name)} · ${c.type === 'remote' ? 'remote' : 'runs on this computer'} · ${AUTH_LABEL[c.auth]}${c.tokenLocked ? ' (token in the keychain; open the AgentsCircle app to use it)' : c.hasToken ? (c.tokenStore === 'keychain' ? ' (saved in your keychain)' : ' (saved)') : ''}</span>${connStatus(c)}</div>
       <div class="sub"><code>${esc(c.type === 'remote' ? c.url : [c.command, ...(c.args || [])].join(' '))}</code></div>
       <div class="sub">${esc(scopeText(c))}</div>
@@ -63,7 +71,7 @@ function renderConnectors() {
 
 function addBodyHtml() {
   if (conn.addTab === 'popular') {
-    return `<div class="cgrid">${conn.catalog.map((x, i) => `<div class="ccard"><div class="h"><span class="cicon sm">${esc(initials(x.title))}</span><span class="t">${esc(x.title)}</span>${x.added ? '<span class="pill ok">added</span>' : `<button data-cat="${i}">Add</button>`}</div>
+    return `<div class="cgrid">${conn.catalog.map((x, i) => `<div class="ccard"><div class="h">${connIcon(x, 'sm')}<span class="t">${esc(x.title)}</span>${x.added ? '<span class="pill ok">added</span>' : `<button data-cat="${i}">Add</button>`}</div>
       <div class="hint d">${esc(x.description)}</div>
       <div class="hint a">${AUTH_LABEL[x.auth]}${x.tokenHint ? ', ' + esc(x.tokenHint) : ''}</div></div>`).join('')}</div>`;
   }
@@ -71,7 +79,7 @@ function addBodyHtml() {
     const r = conn.results;
     return `<div class="row" style="align-items:center"><input id="regQ" placeholder="Search the official MCP Registry, e.g. postgres, slack, shopify" value="${esc(conn.lastQ || '')}"><button id="regGo">Search</button></div>
       <div class="hint">The registry lists thousands of connectors published by their makers. Check who publishes one before adding it.</div>
-      <div id="regResults">${!r ? '' : r.error ? `<div class="err">${esc(r.error)}</div>` : !r.length ? '<div class="hint">Nothing found.</div>' : r.map((x, i) => `<div class="acctrow" style="grid-template-columns:1fr auto"><div style="min-width:0"><div class="h">${esc(x.title)} <span class="hint" style="margin:0;font-weight:400">${esc(x.registryName)}${x.version ? ' · v' + esc(x.version) : ''}</span></div><div class="sub">${esc(x.description)}</div><div class="sub"><code>${esc(x.type === 'remote' ? x.url : [x.command, ...x.args].join(' '))}</code>${x.repository ? ` · <a href="${esc(x.repository)}" target="_blank" rel="noopener">source</a>` : ''}</div></div><div class="btns"><button data-reg="${i}">Add</button></div></div>`).join('')}</div>`;
+      <div id="regResults">${!r ? '' : r.error ? `<div class="err">${esc(r.error)}</div>` : !r.length ? '<div class="hint">Nothing found.</div>' : r.map((x, i) => `<div class="acctrow" style="grid-template-columns:1fr auto"><div style="min-width:0"><div class="h">${connIcon(x, 'sm')}${esc(x.title)} <span class="hint" style="margin:0;font-weight:400">${esc(x.registryName)}${x.version ? ' · v' + esc(x.version) : ''}</span></div><div class="sub">${esc(x.description)}</div><div class="sub"><code>${esc(x.type === 'remote' ? x.url : [x.command, ...x.args].join(' '))}</code>${x.repository ? ` · <a href="${esc(x.repository)}" target="_blank" rel="noopener">source</a>` : ''}</div></div><div class="btns"><button data-reg="${i}">Add</button></div></div>`).join('')}</div>`;
   }
   if (conn.addTab === 'import') {
     const list = conn.importable;

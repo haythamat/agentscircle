@@ -11,5 +11,7 @@ contextBridge.exposeInMainWorld('agentscircleDesktop', {
   onUpdate: (cb) => ipcRenderer.on('updates:status', (_e, s) => cb(s)),
   onOpenSettings: (cb) => ipcRenderer.on('ui:open-settings', (_e, tab) => cb(tab)),
   onNewSession: (cb) => ipcRenderer.on('ui:new-session', () => cb()),
+  onToggleSidebar: (cb) => ipcRenderer.on('ui:toggle-sidebar', () => cb()),
+  onTogglePanel: (cb) => ipcRenderer.on('ui:toggle-panel', () => cb()),
   setBadge: (n) => ipcRenderer.send('app:badge', Number(n) || 0),
 });

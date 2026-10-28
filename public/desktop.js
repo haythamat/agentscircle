@@ -27,6 +27,8 @@ if (desk) {
   if (hint && /Copy as Pathname/.test(hint.textContent)) hint.textContent = 'Click Choose… to pick the folder, or paste its full path.';
   desk.onOpenSettings((tab) => openSettings(tab));
   desk.onNewSession(() => $('newBtn').click());
+  if (desk.onToggleSidebar) desk.onToggleSidebar(() => setSidebar(!look.sidebar));
+  if (desk.onTogglePanel) desk.onTogglePanel(() => { if (typeof openPanel === 'function' && current) (document.body.classList.contains('panel-open') ? closePanel() : openPanel()); });
   desk.onUpdate(() => { if ($('setAbout') && $('setAbout').style.display !== 'none') loadAbout(); });
 }
 

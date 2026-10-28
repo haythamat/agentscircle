@@ -30,6 +30,21 @@ const CATALOG = [
   { name: 'playwright', title: 'Playwright', description: 'Control a browser: open pages, click, screenshot.', type: 'local', command: 'npx', args: ['-y', '@playwright/mcp@latest'], auth: 'none' },
 ];
 
+// The service's own website, used to show its official icon.
+const SITES = { lovable: 'lovable.dev', github: 'github.com', supabase: 'supabase.com', vercel: 'vercel.com', stripe: 'stripe.com', notion: 'notion.so', linear: 'linear.app', figma: 'figma.com', sentry: 'sentry.io', huggingface: 'huggingface.co', zapier: 'zapier.com', context7: 'context7.com', deepwiki: 'deepwiki.com', playwright: 'playwright.dev' };
+const TWO_PART = /\.(co|com|org|net|gov|ac|edu)\.[a-z]{2}$/i;
+function siteOf(c) {
+  if (!c) return null;
+  if (c.site) return c.site;
+  if (SITES[c.name]) return SITES[c.name];
+  let host = null;
+  try { host = new URL(c.url || c.repository || '').hostname.toLowerCase(); } catch { return null; }
+  if (!host || /^[\d.]+$/.test(host) || !host.includes('.') || host === 'localhost') return null;
+  if (host === 'github.com' && c.repository) return null; // a repo link says nothing about the service
+  const parts = host.split('.');
+  return parts.slice(TWO_PART.test(host) ? -3 : -2).join('.');
+}
+
 module.exports = function createConnectors({ dataDir, accounts, version, vault }) {
   const file = path.join(dataDir, 'connectors.json');
   const runDir = path.join(dataDir, 'mcp');
@@ -362,12 +377,12 @@ module.exports = function createConnectors({ dataDir, accounts, version, vault }
     return [...seen.values()];
   }
   function fromRegistry(s) {
-    const base = { registryName: s.name, title: s.title || s.name.split('/').pop(), description: s.description || '', version: s.version, repository: s.repository && s.repository.url };
+    const base = { registryName: s.name, title: s.title || s.name.split('/').pop(), description: s.description || '', version: s.version, repository: s.repository && s.repository.url, site: s.websiteUrl ? siteOf({ url: s.websiteUrl }) : null };
     const name = s.name.split('/').pop().toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/^-+/, '').slice(0, 40) || 'connector';
     const remote = (s.remotes || []).find((r) => r.url) || (s.packages || []).map((p) => p.transport).find((t) => t && t.url);
     if (remote) {
       const headers = (remote.headers || []).filter((h) => h.isRequired).map((h) => ({ name: h.name, description: h.description, secret: !!h.isSecret }));
-      return { ...base, name, type: 'remote', url: remote.url, transport: remote.type === 'sse' ? 'sse' : 'http', auth: headers.length ? 'token' : 'oauth', needHeaders: headers };
+      return { ...base, site: base.site || siteOf({ url: remote.url }), name, type: 'remote', url: remote.url, transport: remote.type === 'sse' ? 'sse' : 'http', auth: headers.length ? 'token' : 'oauth', needHeaders: headers };
     }
     const pkg = (s.packages || []).find((p) => ['npm', 'pypi', 'oci', 'docker'].includes(p.registryType || p.registry_type));
     if (!pkg) return null;
@@ -428,13 +443,13 @@ module.exports = function createConnectors({ dataDir, accounts, version, vault }
       return { id: a.id, gets: !!support(t) && c.enabled && (c.scope === 'all' || c.scope.includes(a.id)), supported: !!support(t) };
     });
     const { token, tokenLocked, tokenRef, ...rest } = c;
-    return { ...rest, hasToken: !!token || !!tokenLocked, tokenLocked: !!tokenLocked, tokenStore: tokenRef === 'keychain' ? 'keychain' : token ? 'file' : null, agents };
+    return { ...rest, site: siteOf(c), hasToken: !!token || !!tokenLocked, tokenLocked: !!tokenLocked, tokenStore: tokenRef === 'keychain' ? 'keychain' : token ? 'file' : null, agents };
   }
 
   return {
     list: () => LIST.map(publicConnector),
     names: () => LIST.map((c) => c.name),
-    catalog: () => CATALOG.map((x) => ({ ...x, added: LIST.some((c) => c.name === x.name || (x.url && c.url === x.url)) })),
+    catalog: () => CATALOG.map((x) => ({ ...x, site: siteOf(x), added: LIST.some((c) => c.name === x.name || (x.url && c.url === x.url)) })),
     add, update, remove, test, signIn, searchRegistry, importable, injection, cleanup, forAgent,
     supports: (tool) => !!support(tool),
   };
