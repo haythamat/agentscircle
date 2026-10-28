@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AgentsCircle</title>
+<link rel="icon" href="/favicon.png">
+<script>
+  // Apply the saved theme before anything paints (no flash).
+  (function () {
+    var p = {}; try { p = JSON.parse(localStorage.getItem('agentscircle:look') || '{}'); } catch (e) {}
+    var old = null; try { old = localStorage.getItem('agentscircle:theme'); } catch (e) {}
+    var mode = p.mode || (old === 'light' || old === 'dark' ? old : 'system');
+    var dark = mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+    var r = document.documentElement;
+    r.dataset.theme = dark ? (p.dark || 'graphite') : (p.light || 'daylight');
+    r.dataset.scheme = dark ? 'dark' : 'light';
+  })();
+</script>
+<link rel="stylesheet" href="/app.css">
+<script src="/icons.js"></script>
+</head>
+<body>
+<aside>
+  <div class="brand"><span id="brandMark"></span><span class="word">AgentsCircle</span><span class="spacer"></span><button class="ghost ib" id="sideHide" data-tip="Hide sidebar  ⌘B"></button></div>
+  <div class="side-actions">
+    <button class="primary" id="newBtn"></button>
+    <div class="needswrap"><button id="needsBtn" style="display:none"></button><div id="needsList"></div></div>
+    <div class="searchbox"><span id="searchIc"></span><input id="searchQ" placeholder="Search all sessions" autocomplete="off"></div>
+  </div>
+  <div class="side-label">Sessions</div>
+  <div class="sessions" id="sessions"></div>
+  <div class="sessions" id="searchResults" style="display:none"></div>
+  <div class="foot"><button class="ghost" id="acctBtn"></button>
+    <div class="themes" id="themes" role="radiogroup" aria-label="Theme"><button data-t="light" data-tip="Light"></button><button data-t="system" data-tip="Match your computer"></button><button data-t="dark" data-tip="Dark"></button></div></div>
+</aside>
+
+<main>
+  <header id="header" style="display:none">
+    <button class="ghost ib" id="sideShow" data-tip="Show sidebar  ⌘B" style="display:none"></button>
+    <div class="titles">
+      <div class="title" id="sTitle"></div>
+      <div class="folder" id="sFolder"></div>
+    </div>
+    <div class="tools">
+      <button class="ghost" id="modeBtn">Mode</button>
+      <button class="ghost" id="handoffBtn">Hand-offs</button>
+      <span class="sep"></span>
+      <button class="ghost ib" id="importBtn" data-tip="Bring in a Claude Code or Codex conversation"></button>
+      <button class="ghost ib" id="exportBtn" data-tip="Export the transcript as Markdown"></button>
+      <button class="ghost ib" id="panelBtn" data-tip="Board, files and usage  ⌘J"></button>
+    </div>
+  </header>
+  <div class="memberbar" id="memberbar" style="display:none"><span class="lead">In this circle</span><div class="chips" id="chips"></div></div>
+  <div id="feed"></div>
+  <div class="composer" id="composer" style="display:none">
+    <div id="suggest"></div>
+    <div class="status" id="status"></div>
+    <div class="field">
+      <div id="pendingAtt" class="attrow"></div>
+      <textarea id="input" rows="1" placeholder="Message the circle. Type @ to choose an agent."></textarea>
+      <div class="fbar">
+        <button class="ghost ib" id="attachBtn" data-tip="Attach files or screenshots (you can also paste or drop them)"></button>
+        <input type="file" id="fileInput" multiple style="display:none">
+        <span class="hintline">Enter to send · Shift+Enter for a new line</span>
+        <button class="danger" id="stopBtn" style="display:none">Stop</button>
+        <button class="primary" id="sendBtn" data-tip="Send  ↵"></button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<section id="panel">
+  <div class="phead"><div id="panelTabs"><button data-tab="progress">Board<span class="n"></span></button><button data-tab="files">Files<span class="n"></span></button><button data-tab="used">Usage</button><button data-tab="branches" style="display:none">Branches</button></div><button id="panelClose" data-tip="Close panel  ⌘J"></button></div>
+  <div id="panelBody"></div>
+</section>
+
+<div class="modal" id="setupModal">
+  <div class="card" id="setupCard" style="width:min(720px,95vw)"></div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="card">
+    <h3>New session</h3>
+    <p class="lead">A session is one circle: a project folder, the agents you bring in, and one shared conversation.</p>
+    <label for="fFolder">Project folder</label>
+    <input id="fFolder" placeholder="/Users/you/projects/my-app" />
+    <div class="hint">Full path. In Finder, hold Option, right-click the folder, then Copy as Pathname. On Windows: Shift + right-click, Copy as path.</div>
+    <label for="fName">Name <span class="hint" style="font-weight:400">optional</span></label>
+    <input id="fName" placeholder="Landing page redesign" />
+    <label>Agents</label>
+    <div class="agentpick" id="fAgents"></div>
+    <label>Continue a conversation <span class="hint" style="font-weight:400">optional</span></label>
+    <div class="hint" id="fConvHint" style="margin-top:0">Choose the project folder to see your Claude Code and Codex conversations from it.</div>
+    <div class="convlist" id="fConvs" style="display:none"></div>
+    <label for="fContext">Or paste context from another chat <span class="hint" style="font-weight:400">optional</span></label>
+    <textarea id="fContext" rows="3" placeholder="A summary from Claude, ChatGPT or Cursor, so every agent starts with it."></textarea>
+    <div class="err" id="fErr"></div>
+    <div class="actions"><button id="fCancel">Cancel</button><button class="primary" id="fCreate">Create session</button></div>
+  </div>
+</div>
+
+<div class="modal" id="impModal">
+  <div class="card">
+    <h3>Bring in a conversation</h3>
+    <p class="lead">Conversations you had in Claude Code or Codex in this project's folder. The messages join this circle, so every agent here can continue from them.</p>
+    <div class="convlist" id="iConvs"></div>
+    <div class="err" id="iErr"></div>
+    <div class="actions"><button id="iCancel">Cancel</button><button class="primary" id="iGo" disabled>Bring it in</button></div>
+  </div>
+</div>
+
+<div class="modal" id="acctModal">
+  <div class="card wide">
+    <nav class="setnav">
+      <h3>Settings</h3>
+      <div id="setTabs" style="display:flex;flex-direction:column;gap:2px">
+        <button data-set="accounts"><span data-ic="users"></span>Agents and accounts</button>
+        <button data-set="connectors"><span data-ic="plug"></span>Connectors</button>
+        <button data-set="skills"><span data-ic="layers"></span>Skills</button>
+        <button data-set="appearance"><span data-ic="palette"></span>Appearance</button>
+        <button data-set="about"><span data-ic="info"></span>About</button>
+      </div>
+      <span class="spacer"></span>
+      <button id="setClose"><span data-ic="x"></span>Close</button>
+    </nav>
+    <div class="setbody">
+    <div id="setAccounts">
+      <h4>Agents and accounts</h4>
+      <p class="lead">Each handle is one account. Add a second Claude or Codex account with its own login, and you'll always see which one replied.</p>
+      <div class="setgroup"><div class="row-s"><div class="txt"><b>Switch accounts when one runs out</b><span>When an account hits its usage limit, another account of the same tool continues the same conversation; the first one rests until its limit resets.</span></div><label class="switch ctl"><input type="checkbox" id="autoSwitch"><span></span></label></div></div>
+      <div id="acctList"></div>
+      <div class="notice" id="acctNotice"></div>
+      <section class="addacct">
+        <h3 style="margin:0 0 2px">Add an account</h3>
+        <div class="two">
+          <div><label for="aTool">Tool</label><select id="aTool"></select></div>
+          <div><label for="aHandle">Handle (what you type after @)</label><input id="aHandle" placeholder="claude-work" /></div>
+          <div><label for="aLabel">Label <span class="hint" style="font-weight:400">optional</span></label><input id="aLabel" placeholder="Work" /></div>
+          <div><label for="aColor">Color</label><input id="aColor" type="color" /></div>
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;color:var(--text);font-weight:500;margin-top:14px" id="aSepWrap"><input type="checkbox" id="aSep" checked> Separate login (a different account from your normal one)</label>
+        <div id="aKeyWrap" style="display:none"><label for="aKey">API key for this account <span class="hint" style="font-weight:400">optional</span></label><input id="aKey" type="password" placeholder="Paste the API key from this account's settings" autocomplete="off" /><div class="hint">Kept on this computer only (in your keychain in the desktop app).</div></div>
+        <div class="err" id="aErr"></div>
+        <div class="actions" style="margin-top:12px"><button class="primary" id="aAdd">Add account</button></div>
+      </section>
+    </div>
+    <div id="setConnectors" style="display:none"></div>
+    <div id="setSkills" style="display:none"></div>
+    <div id="setAbout" style="display:none"></div>
+    <div id="setAppearance" style="display:none">
+      <h4>Appearance</h4>
+      <p class="lead">Themes and layout apply right away and are remembered on this computer.</p>
+      <div class="setgroup"><div class="row-s"><div class="txt"><b>Mode</b><span>Auto follows your Mac or Windows setting.</span></div><div class="seg ctl" id="themes2"><button data-t="light">Light</button><button data-t="system">Auto</button><button data-t="dark">Dark</button></div></div></div>
+      <label style="margin-top:6px">Dark theme</label>
+      <div class="themegrid" id="darkThemes"></div>
+      <label>Light theme</label>
+      <div class="themegrid" id="lightThemes"></div>
+      <label>Layout</label>
+      <div class="setgroup" id="layoutPrefs"></div>
+      <label>Notifications</label>
+      <div class="setgroup" style="padding:4px 14px" id="notifyPrefs"></div>
+      <label>Keyboard shortcuts</label>
+      <div class="setgroup" style="padding:12px 14px"><div class="kbdlist" id="kbdList"></div></div>
+    </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let agents = [], sessions = [], current = null, ws = null, queue = [], running = [];
+let tools = [];
+let sharedNames = [];
+const agentMap = () => Object.fromEntries(agents.map(a => [a.id, a]));
+const acctText = (a) => !a ? '' : a.label || (a.identity && a.identity.label) || '';
+const acctTitle = (a) => [a.toolName, a.label, a.identity && a.identity.label ? 'signed in as ' + a.identity.label : (a.identity ? 'not signed in' : ''), a.identity && a.identity.detail, a.separateLogin ? 'own login folder' : 'your normal login', a.limited ? 'hit its usage limit' : ''].filter(Boolean).join(' · ');
+
+const api = async (url, opts = {}) => {
+  const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+};
+
+// ---- tiny markdown ----
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function inline(t) {
+  return t.replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|\s)_([^_]+)_/g, '$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s(])@([a-z0-9_-]+)/gi, (m, pre, id) => { const a = agentMap()[id.toLowerCase()]; return a ? `${pre}<span class="mention" style="color:${a.color}">@${id}</span>` : m; });
+}
+function md(src) {
+  const parts = (src || '').split(/```/);
+  return parts.map((p, i) => {
+    if (i % 2) { const nl = p.indexOf('\n'); return `<pre><code>${esc(nl >= 0 ? p.slice(nl + 1) : p)}</code></pre>`; }
+    const out = []; let para = []; let list = null;
+    const flushPara = () => { if (para.length) { out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; } };
+    const flushList = () => { if (list) { out.push(`<${list.tag}>` + list.items.map((x) => `<li>${inline(x)}</li>`).join('') + `</${list.tag}>`); list = null; } };
+    for (const raw of esc(p).split('\n')) {
+      const line = raw.trimEnd();
+      const h = /^(#{1,4})\s+(.*)$/.exec(line);
+      const ul = /^\s*[-*•]\s+(.*)$/.exec(line);
+      const ol = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+      if (!line.trim()) { flushPara(); flushList(); }
+      else if (h) { flushPara(); flushList(); out.push(`<div class="mdh h${h[1].length}">${inline(h[2])}</div>`); }
+      else if (ul || ol) {
+        flushPara(); const tag = ul ? 'ul' : 'ol';
+        if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
+        list.items.push((ul || ol)[1]);
+      } else { flushList(); para.push(line); }
+    }
+    flushPara(); flushList();
+    return out.join('');
+  }).join('');
+}
+
+// ---- sessions list ----
+async function loadSessions() {
+  sessions = await api('/api/sessions');
+  const folderName = (f) => String(f || '').split(/[\\/]/).filter(Boolean).pop() || f;
+  $('sessions').innerHTML = sessions.map(s => `<div class="sess ${current && s.id === current.id ? 'active' : ''}" data-id="${s.id}" title="${esc(s.folder)}">
+    <div class="n"><span class="name">${esc(s.name)}</span><span class="state">${s.waiting ? '<span class="needdot" title="Waiting for you"></span>' : s.busy ? '<span class="busy" title="Working"></span>' : ''}</span></div><div class="f">${esc(folderName(s.folder))} · ${ago(s.updatedAt)}</div></div>`).join('') || '<div class="hint" style="padding:6px 10px">No sessions yet. Create one to start a circle.</div>';
+  document.querySelectorAll('.sess').forEach(el => el.onclick = () => openSession(el.dataset.id));
+}
+
+async function openSession(id) {
+  const s = await api('/api/sessions/' + id);
+  current = s; queue = s.queue || []; running = s.running || [];
+  document.body.classList.add('has-session');
+  localStorage.setItem('agentscircle:last', id);
+  $('header').style.display = ''; $('composer').style.display = ''; $('memberbar').style.display = '';
+  $('sTitle').textContent = s.name; $('sFolder').textContent = s.folder;
+  renderChips(); renderFeed(); renderStatus(); loadSessions();
+  if (typeof panelReset === 'function') panelReset();
+  if (typeof renderHandoffBtn === 'function') renderHandoffBtn();
+  if (typeof clearAttachments === 'function') clearAttachments();
+  if (typeof renderModeBtn === 'function') renderModeBtn();
+  if (typeof refreshBranches === 'function' && (s.mode === 'parallel' || Object.keys(s.worktrees || {}).length)) refreshBranches();
+  const gb = $('gitBanner');
+  if (gb) gb.remove();
+  if (!s.isRepo) {
+    $('memberbar').insertAdjacentHTML('afterend', `<div class="gitbanner" id="gitBanner">${ic('info')}<span>Undo and change review need git in this folder.</span><button id="gitInit">Turn on git</button><span class="hint" style="margin:0">Creates a .git folder; nothing is committed.</span></div>`);
+    $('gitInit').onclick = async () => { await api(`/api/sessions/${s.id}/git-init`, { method: 'POST' }); openSession(s.id); };
+  }
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
+  $('input').focus();
+}
+
+function renderChips() {
+  $('chips').innerHTML = agents.map(a => {
+    const on = current.members.includes(a.id);
+    if (!on && !a.installed) return '';
+    const cls = (!a.installed ? 'missing' : on ? '' : 'off') + (a.limited ? ' limited' : '');
+    const def = current.defaultAgent === a.id ? ' default' : '';
+    const how = !a.installed ? 'Not installed on this computer' : on ? 'In this session. Click to remove. Double-click to make it the default.' : 'Click to add to this session';
+    const acct = a.label || '';
+    return `<span class="chip ${cls}${def}" data-id="${a.id}" data-tip="${esc(acctTitle(a) + ' · ' + how)}">${tile(a.id, a.color)}<span class="handle">@${a.id}</span>${acct ? `<span class="acct">${esc(acct)}</span>` : ''}${def ? ic('star', 'star') : ''}</span>`;
+  }).join('') + `<span class="chip add" id="chipManage" data-tip="Add or manage accounts">${ic('plus', 'sm')}Account</span>`;
+  $('chipManage').onclick = () => openSettings('accounts');
+  document.querySelectorAll('.chip[data-id]').forEach(el => {
+    el.onclick = async () => {
+      const a = agentMap()[el.dataset.id]; if (!a.installed) return;
+      const members = current.members.includes(a.id) ? current.members.filter(m => m !== a.id) : [...current.members, a.id];
+      await api('/api/sessions/' + current.id, { method: 'PATCH', body: { members } });
+    };
+    el.ondblclick = async () => { await api('/api/sessions/' + current.id, { method: 'PATCH', body: { defaultAgent: el.dataset.id } }); };
+  });
+}
+
+// ---- feed ----
+const KIND_LABEL = { risky: 'Risky', write: 'Changes things', read: 'Read only' };
+function approvalsHtml(m) {
+  const list = m.approvals || [];
+  if (!list.length) return '';
+  return '<div class="approvals">' + list.map(x => x.status === 'pending' ? `
+    <div class="apcard ${x.kind}" data-ap="${x.id}">
+      <div class="aphead"><span class="aptag ${x.kind}">${KIND_LABEL[x.kind] || ''}</span><b>@${esc(m.agent)} wants to</b></div>
+      <pre class="apcmd">${esc(x.summary)}</pre>
+      ${x.input && x.input !== '{}' && x.tool !== 'Bash' ? `<details class="log"><summary>Details</summary><pre>${esc(x.input)}</pre></details>` : ''}
+      <div class="apbtns"><button class="primary" data-decide="allow">Allow once</button><button data-decide="always" title="Don't ask again for this kind of action from @${esc(m.agent)} in this session">Allow for this session</button><input data-note placeholder="Optional: tell the agent why…"><button class="danger" data-decide="deny">Deny</button></div>
+    </div>` : `<div class="apdone ${x.status}">${x.status === 'allowed' ? ic('check', 'sm') + ' Allowed' : ic('x', 'sm') + ' Denied'}${x.always ? ' for this session' : ''}: <code>${esc(x.summary.slice(0, 140))}</code>${x.by === 'system' ? ' <span class="hint" style="margin:0">(no answer)</span>' : ''}</div>`).join('') + '</div>';
+}
+function questionsHtml(m) {
+  const list = m.questions || [];
+  if (!list.length) return '';
+  return '<div class="approvals">' + list.map(q => q.status === 'pending' ? `
+    <div class="qcard" data-q="${q.id}" data-multi="${q.multiple ? 1 : 0}">
+      <div class="aphead"><span class="aptag risky">Question</span><b>@${esc(m.agent)} asks</b></div>
+      <div class="qtext">${esc(q.question)}</div>
+      ${q.options.length ? `<div class="qopts">${q.options.map(o => `<button data-qopt="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
+      <div class="apbtns"><input data-qother placeholder="${q.options.length ? 'Or type your own answer…' : 'Type your answer…'}"><button class="primary" data-qsend>Send</button></div>
+    </div>` : `<div class="qdone">${q.status === 'answered' ? `${ic('message', 'sm')} ${esc(q.question)} · You answered <b>${esc(q.answer)}</b>` : `@${esc(m.agent)} asked: ${esc(q.question)} · <span class="hint" style="margin:0">no answer</span>`}</div>`).join('') + '</div>';
+}
+async function answerQuestion(card, answer) {
+  if (!answer) return;
+  card.querySelectorAll('button,input').forEach(b => b.disabled = true);
+  try { await api(`/api/sessions/${current.id}/questions/${card.dataset.q}`, { method: 'POST', body: { answer } }); }
+  catch (err) { alert(err.message); card.querySelectorAll('button,input').forEach(b => b.disabled = false); }
+}
+document.addEventListener('click', (e) => {
+  const o = e.target.closest('[data-qopt]');
+  if (o) {
+    const card = o.closest('[data-q]');
+    if (card.dataset.multi === '1') { o.classList.toggle('on'); return; }
+    return answerQuestion(card, o.dataset.qopt);
+  }
+  const send = e.target.closest('[data-qsend]');
+  if (send) {
+    const card = send.closest('[data-q]');
+    const picked = [...card.querySelectorAll('[data-qopt].on')].map(b => b.dataset.qopt);
+    const own = card.querySelector('[data-qother]').value.trim();
+    answerQuestion(card, [...picked, own].filter(Boolean).join('; '));
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-qother]')) { e.preventDefault(); e.target.closest('[data-q]').querySelector('[data-qsend]').click(); }
+});
+function turnActionsHtml(m) {
+  if ((m.role !== 'agent' && m.kind !== 'apply') || m.pending) return '';
+  const can = m.checkpoint && (m.files || []).length;
+  if (!can) return '';
+  return `<div class="turnacts">${m.undone
+    ? `<span class="undone">Undone</span><button data-redo="${m.id}">${ic('redo', 'sm')}Bring back</button>`
+    : `<button data-review="${m.id}">${ic('eye', 'sm')}Review changes</button><button class="ghost" data-undo="${m.id}" data-tip="Put back the files this turn changed">${ic('undo', 'sm')}Undo</button>`}</div>`;
+}
+document.addEventListener('click', async (e) => {
+  const d = e.target.closest('[data-decide]');
+  if (d) {
+    const card = d.closest('[data-ap]'); const note = card.querySelector('[data-note]').value;
+    card.querySelectorAll('button').forEach(b => b.disabled = true);
+    try { await api(`/api/sessions/${current.id}/approvals/${card.dataset.ap}`, { method: 'POST', body: { decision: d.dataset.decide, note } }); } catch (err) { alert(err.message); }
+    return;
+  }
+  const u = e.target.closest('[data-undo]');
+  if (u) {
+    try {
+      const pv = await api(`/api/sessions/${current.id}/turns/${u.dataset.undo}/undo`);
+      let msg = `Undo this turn? These files go back to how they were before it:\n\n${pv.files.join('\n')}`;
+      if (pv.later.length) msg += `\n\nHeads up: later turns also changed some of these files (${pv.later.map(l => '@' + l.agent + ': ' + l.files.join(', ')).join('; ')}). Their changes to those files will be undone too.`;
+      if (pv.commits.length) msg += '\n\nCommits made in this turn stay in git history.';
+      msg += '\n\nYou can bring the changes back afterwards.';
+      if (!confirm(msg)) return;
+      await api(`/api/sessions/${current.id}/turns/${u.dataset.undo}/undo`, { method: 'POST' });
+      if (typeof refreshOpenFile === 'function') refreshOpenFile();
+    } catch (err) { alert(err.message); }
+    return;
+  }
+  const r = e.target.closest('[data-redo]');
+  if (r) { try { await api(`/api/sessions/${current.id}/turns/${r.dataset.redo}/redo`, { method: 'POST' }); } catch (err) { alert(err.message); } return; }
+  const rv = e.target.closest('[data-review]');
+  if (rv && typeof openTurnReview === 'function') openTurnReview(rv.dataset.review);
+});
+
+const openImports = new Set();
+const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function msgHtml(m) {
+  if (m.kind === 'canary') {
+    return `<div class="msg system canary" id="m-${m.id}"><div class="body"><div class="imphead">${ic('alert')}<span>${esc(m.text)}</span><button data-sumnow>Summarize now</button></div></div></div>`;
+  }
+  if (m.kind === 'import') {
+    const open = openImports.has(m.importId);
+    return `<div class="msg system" id="m-${m.id}"><div class="body"><div class="imphead">${ic('import')}<span>${esc(m.text)}</span><button data-imp="${m.importId}">${open ? 'Hide' : 'Show'} the conversation</button></div></div></div>`;
+  }
+  if (m.role === 'external') {
+    const side = m.from === 'user' ? 'user' : 'agent';
+    const who = m.from === 'user' ? `You <span class="src">in ${esc(m.tool)}</span>` : m.from === 'summary' ? `Summary <span class="src">from ${esc(m.tool)}</span>` : `<span class="handle">${esc(m.tool)}</span><span class="src">before this circle</span>`;
+    return `<div class="msg ${side} ext${openImports.has(m.importId) ? ' open' : ''}" data-impmsg="${m.importId}" id="m-${m.id}"><div class="who">${who}<span class="meta">${m.at ? new Date(m.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</span></div><div class="body"><div class="txt">${md(m.text)}</div></div></div>`;
+  }
+  if (m.role === 'handoff') {
+    const f = agentMap()[m.agent], t = agentMap()[m.to];
+    return `<div class="msg handoff" id="m-${m.id}"><div class="hoff"><span class="pass">${tile(m.agent, f && f.color, 'sm')}${ic('chevronRight')}${tile(m.to, t && t.color, 'sm')}</span><span><b style="color:var(--text);font-weight:550">@${esc(m.agent)}</b> handed to <b style="color:var(--text);font-weight:550">@${esc(m.to)}</b></span><span class="task">${esc(m.text)}</span></div></div>`;
+  }
+  if (m.kind === 'summary') {
+    const firstLine = m.text.split('\n')[0].replace(/\*\*/g, '');
+    return `<div class="msg system" id="m-${m.id}"><div class="body" style="width:100%;max-width:none"><details class="sumbox"><summary>${ic('chevronRight', 'sm')}${esc(firstLine)}</summary><div class="txt">${md(m.text.split('\n').slice(1).join('\n'))}</div></details></div></div>`;
+  }
+  if (m.role === 'system') {
+    const icon = m.kind === 'switch' ? 'refresh' : m.kind === 'commit' ? 'commit' : m.kind === 'hint' ? 'info' : 'info';
+    return `<div class="msg system${m.kind === 'hint' ? ' notice' : ''}" id="m-${m.id}"><div class="body">${ic(icon, 'sm')}${md(m.text).replace(/^<p>|<\/p>$/g, '')}</div></div>`;
+  }
+  const a = m.agent && agentMap()[m.agent];
+  const color = a ? a.color : '';
+  const acct = m.agent ? (m.account || acctText(a)) : '';
+  const meta = [clock(m.at), m.seconds != null ? fmtSecs(m.seconds) : '', m.imported ? 'imported' : ''].filter(Boolean).join(' · ');
+  let who;
+  if (m.role === 'user') who = `You<span class="meta">${meta}</span>`;
+  else {
+    const st = m.pending ? (m.waiting ? `<span class="st waiting">${(m.questions || []).some(q => q.status === 'pending') ? 'Question' : 'Needs OK'}</span>` : '<span class="st working">Working</span>')
+      : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout'].includes(m.status) ? `<span class="st ${m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';
+    who = `${tile(m.agent, color)}<span class="handle" data-tip="${a ? esc(acctTitle(a)) : 'removed agent'}">@${m.agent}</span>${acct ? `<span class="acct">${esc(acct)}</span>` : ''}<span class="meta">${meta}</span>${m.branch ? `<span class="branchtag" data-tip="Worked on its own branch: ${esc(m.branch)}">${ic('branch', 'sm')}own branch</span>` : ''}<span class="state">${st}</span>`;
+  }
+  const body = m.pending && !m.text ? '<span class="working"><span>Working</span><i></i></span>' : md(m.text);
+  const act = (m.activity || []).slice(-5).map(x => `<div>${esc(x)}</div>`).join('');
+  return `<div class="msg ${m.role}${m.pending ? ' pending-msg' : ''}${m.error ? ' error' : ''}${m.waiting ? ' waiting' : ''}" id="m-${m.id}" style="--c:${color}">
+    <div class="who">${who}</div>
+    <div class="body"><div class="txt">${body}</div>
+      ${typeof attachmentsHtml === 'function' ? attachmentsHtml(m) : ''}
+      <div class="activity">${act}</div>
+      ${approvalsHtml(m)}
+      ${questionsHtml(m)}
+      ${typeof filesHtml === 'function' && m.kind !== 'apply' ? filesHtml(m) : ''}
+      ${m.statusLine ? `<div class="statusline"><b>Status</b><span>${esc(m.statusLine)}</span></div>` : ''}
+      ${turnActionsHtml(m)}
+      ${m.log && m.error ? `<details class="log"><summary>Agent log</summary><pre>${esc(m.log)}</pre></details>` : ''}
+    </div></div>`;
+}
+const fmtSecs = (sec) => sec < 60 ? `${sec}s` : sec < 3600 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${Math.floor(sec / 3600)}h ${Math.floor(sec / 60) % 60}m`;
+function renderWelcome() {
+  $('feed').innerHTML = `<div class="empty">${logoMark()}<h2>One chat for all your coding agents</h2><p>Start a session for a project folder, bring in Claude Code, Codex, Cursor or OpenCode, and @mention whoever should take the next step. Everyone sees the same conversation and files.</p><div class="tryrow" style="align-items:center"><button class="primary" id="welcomeNew">${ic('plus')}New session</button></div></div>`;
+  $('welcomeNew').onclick = () => $('newBtn').click();
+}
+function renderFeed() {
+  const feed = $('feed');
+  const first = current.members[0] || 'claude';
+  const tries = [`@${first} give me a quick tour of this project`, current.members[1] ? `@${current.members[1]} review the last changes and list risks` : `@all what would you improve first in this codebase?`];
+  feed.innerHTML = current.messages.length ? current.messages.map(msgHtml).join('')
+    : `<div class="empty">${logoMark()}<h2>${esc(current.name)}</h2><p>Everyone in this circle sees the same conversation and the same files. Mention an agent to hand it work.</p><div class="tryrow">${tries.map(t => `<button class="try" data-try="${esc(t)}">${ic('message', 'sm')}${esc(t)}</button>`).join('')}</div></div>`;
+  feed.querySelectorAll('[data-try]').forEach(b => b.onclick = () => { input.value = b.dataset.try; autosize(); input.focus(); });
+  feed.scrollTop = feed.scrollHeight;
+}
+function upsert(m) {
+  const feed = $('feed'); const near = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 120;
+  const el = $('m-' + m.id);
+  if (el) { const entering = el.classList.contains('enter'); el.outerHTML = msgHtml(m); if (entering) { const n = $('m-' + m.id); if (n) n.classList.add('enter'); } }
+  else {
+    if (feed.querySelector('.empty')) feed.innerHTML = '';
+    feed.insertAdjacentHTML('beforeend', msgHtml(m));
+    const added = feed.lastElementChild; if (added) { added.classList.add('enter'); added.addEventListener('animationend', () => added.classList.remove('enter'), { once: true }); }
+  }
+  if (near) feed.scrollTop = feed.scrollHeight;
+}
+function renderStatus() {
+  const parts = [];
+  const waitingMsg = current && current.messages.find(m => m.pending && m.waiting);
+  const tagOf = (id) => `<span style="display:inline-flex;gap:5px;align-items:center">${tile(id, agentMap()[id]?.color, 'sm')}<span class="handle" style="font-size:13.5px">@${id}</span></span>`;
+  if (waitingMsg) parts.push(`${tagOf(waitingMsg.agent)} <b style="color:var(--warn)">${(waitingMsg.questions || []).some(q => q.status === 'pending') ? 'has a question for you' : 'is waiting for your OK'}</b> <button class="linkbtn" data-goto="${waitingMsg.id}">Show</button>`);
+  const others = running.filter(id => !waitingMsg || id !== waitingMsg.agent);
+  if (others.length) parts.push(`${others.map(tagOf).join(' and ')} <span>${others.length > 1 ? 'are working at the same time' : 'is working'}</span><span class="working mini"><i></i></span>`);
+  document.title = waitingMsg ? '(1) Waiting for you · AgentsCircle' : 'AgentsCircle';
+  if (queue.length) parts.push('<span style="color:var(--faint)">Next</span> ' + queue.map(q => '@' + q).join(', '));
+  if (!running.length && !queue.length && current && !current.members.length) parts.push('No agents yet. Add one from the bar above.');
+  $('status').innerHTML = parts.join('<span style="color:var(--faint)">·</span>');
+  $('stopBtn').style.display = running.length || queue.length ? '' : 'none';
+  $('stopBtn').innerHTML = ic('stop', 'sm') + (running.length > 1 ? 'Stop all' : 'Stop');
+  if (typeof panelRefresh === 'function') panelRefresh();
+}
+
+// ---- websocket ----
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { if (current) ws.send(JSON.stringify({ type: 'subscribe', sessionId: current.id })); };
+  ws.onclose = () => setTimeout(connect, 1000);
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'sessions') { loadSessions(); return; }
+    if (typeof handleAttentionEvent === 'function' && handleAttentionEvent(ev)) return;
+    if (ev.type === 'members' && current) { current.members = ev.members; renderChips(); renderStatus(); return; }
+    if (ev.type === 'connectors') { if (typeof conn !== 'undefined') { conn.list = ev.connectors; if ($('acctModal').classList.contains('open') && $('setConnectors').style.display !== 'none' && !$('cfName')) renderConnectors(); } sharedNames = ev.connectors.map(c => c.name); return; }
+    if (ev.type === 'agents') { agents = ev.agents; renderAccounts(); if (current) { renderChips(); renderFeed(); renderStatus(); } return; }
+    if (!current) return;
+    const find = id => current.messages.find(m => m.id === id);
+    if (ev.type === 'reload' && current) { openSession(current.id); return; }
+    if (ev.type === 'message') { current.messages.push(ev.message); upsert(ev.message); }
+    if (ev.type === 'message') panelRefresh();
+    if (ev.type === 'update') { const m = find(ev.id); if (m) { Object.assign(m, ev.patch); upsert(m); panelRefresh(); if ('waiting' in ev.patch) renderStatus(); } }
+    if (ev.type === 'activity') { const m = find(ev.id); if (m) { (m.activity ||= []).push(ev.line); upsert(m); panelRefresh(); } }
+    if (ev.type === 'status') { const was = running.length; running = ev.running || []; renderStatus(); loadSessions(); if (running.length < was) refreshOpenFile(); }
+    if (ev.type === 'branches' && typeof refreshBranches === 'function') refreshBranches();
+    if (ev.type === 'queue') { queue = ev.queue; renderStatus(); }
+    if (ev.type === 'session') { if (ev.reload) return openSession(current.id); Object.assign(current, ev.session); renderChips(); renderStatus(); if (typeof renderHandoffBtn === 'function') renderHandoffBtn(); if (typeof renderModeBtn === 'function') renderModeBtn(); }
+    if (ev.type === 'summarizing') { $('status').innerHTML = `Summarizing the earlier conversation with <b>@${esc(ev.by)}</b> so every agent keeps the full story…`; }
+  };
+}
+
+// ---- composer + @ autocomplete ----
+const input = $('input'); let sugg = [], sel = 0;
+function mentionQuery() {
+  const upto = input.value.slice(0, input.selectionStart);
+  const m = upto.match(/(^|\s)@([a-z0-9_-]*)$/i); return m ? m[2].toLowerCase() : null;
+}
+function showSuggest() {
+  const q = mentionQuery(); const box = $('suggest');
+  if (q === null || !current) { box.style.display = 'none'; sugg = []; return; }
+  const pool = [...current.members.map(id => agentMap()[id]).filter(Boolean).map(a => ({ ...a, name: [a.toolName, acctText(a)].filter(Boolean).join(' · ') })), { id: 'all', name: 'Everyone, one after another', color: '#6b7280' }];
+  sugg = pool.filter(a => a.id.startsWith(q)); sel = 0;
+  if (!sugg.length) { box.style.display = 'none'; return; }
+  box.innerHTML = sugg.map((a, i) => `<div class="${i === sel ? 'sel' : ''}" data-i="${i}">${tile(a.id, a.color)}<span class="handle">@${a.id}</span><span class="hint">${esc(a.name)}</span></div>`).join('');
+  box.style.display = 'block';
+  box.querySelectorAll('div').forEach(d => d.onmousedown = (e) => { e.preventDefault(); pick(+d.dataset.i); });
+}
+function pick(i) {
+  const a = sugg[i]; if (!a) return;
+  const pos = input.selectionStart; const before = input.value.slice(0, pos).replace(/@([a-z0-9_-]*)$/i, '@' + a.id + ' ');
+  input.value = before + input.value.slice(pos); input.selectionStart = input.selectionEnd = before.length;
+  $('suggest').style.display = 'none'; sugg = []; autosize();
+}
+function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 220) + 'px'; }
+input.addEventListener('input', () => { autosize(); showSuggest(); });
+input.addEventListener('keydown', (e) => {
+  if (sugg.length) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + sugg.length) % sugg.length; showSuggestSel(); return; }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(sel); return; }
+    if (e.key === 'Escape') { $('suggest').style.display = 'none'; sugg = []; return; }
+  }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+function showSuggestSel() { $('suggest').querySelectorAll('div').forEach((d, i) => d.classList.toggle('sel', i === sel)); }
+async function send() {
+  const text = input.value.trim(); if (!text || !current) return;
+  if (typeof uploadsBusy !== 'undefined' && uploadsBusy > 0) { alert('Wait a moment, attachments are still uploading.'); return; }
+  const attachments = typeof takeAttachments === 'function' ? takeAttachments() : [];
+  input.value = ''; autosize();
+  try { await api(`/api/sessions/${current.id}/messages`, { method: 'POST', body: { text, attachments } }); }
+  catch (e) { alert(e.message); input.value = text; }
+}
+$('sendBtn').onclick = send;
+$('stopBtn').onclick = () => api(`/api/sessions/${current.id}/stop`, { method: 'POST' });
+$('exportBtn').onclick = () => window.open(`/api/sessions/${current.id}/export`);
+
+// ---- new session modal ----
+$('newBtn').onclick = () => {
+  $('fErr').textContent = ''; $('fFolder').value = ''; $('fName').value = ''; $('fContext').value = ''; loadFolderConvs();
+  $('fAgents').innerHTML = agents.map(a => `<label class="${a.installed ? '' : 'missing'}" title="${esc(acctTitle(a))}">
+    <input type="checkbox" value="${a.id}" ${a.installed && !a.separateLogin ? 'checked' : ''} ${a.installed ? '' : 'disabled'}>${tile(a.id, a.color, 'sm')}<span class="handle" style="font-size:14px">@${a.id}</span>${acctText(a) ? ` <span class="hint" style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(acctText(a))}</span>` : ''}</label>`).join('') || '<div class="hint">No agents yet. Add one under "Agents and accounts".</div>';
+  $('modal').classList.add('open'); $('fFolder').focus();
+};
+$('fCancel').onclick = () => $('modal').classList.remove('open');
+$('fCreate').onclick = async () => {
+  try {
+    const members = [...$('fAgents').querySelectorAll('input:checked')].map(i => i.value);
+    const s = await api('/api/sessions', { method: 'POST', body: { folder: $('fFolder').value.replace(/^["']|["']$/g, ''), name: $('fName').value, members, context: $('fContext').value, importRef: fConvRef } });
+    $('modal').classList.remove('open'); await loadSessions(); openSession(s.id);
+  } catch (e) { $('fErr').textContent = e.message; }
+};
+
+// ---- conversations from Claude Code / Codex ----
+document.addEventListener('click', async (e) => {
+  const sn = e.target.closest('[data-sumnow]');
+  if (sn) {
+    sn.disabled = true; sn.textContent = 'Summarizing…';
+    try { await api(`/api/sessions/${current.id}/summarize`, { method: 'POST' }); sn.textContent = 'Summarized'; }
+    catch (err) { alert(err.message); sn.disabled = false; sn.textContent = 'Summarize now'; }
+    return;
+  }
+  const b = e.target.closest('[data-imp]');
+  if (!b) return;
+  const id = b.dataset.imp;
+  if (openImports.has(id)) openImports.delete(id); else openImports.add(id);
+  document.querySelectorAll(`[data-impmsg="${id}"]`).forEach(el => el.classList.toggle('open', openImports.has(id)));
+  b.textContent = `${openImports.has(id) ? 'Hide' : 'Show'} the conversation`;
+});
+function ago(iso) {
+  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (m < 60) return `${Math.max(m, 1)} min ago`; const h = Math.round(m / 60); if (h < 48) return `${h} h ago`;
+  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+function convListHtml(list, selected) {
+  return list.map(c => `<div class="conv${c.ref === selected ? ' sel' : ''}" data-ref="${c.ref}" title="${esc(c.source)} · ${esc(c.resume)}">
+    <span class="k">${c.kind === 'claude' ? 'Claude Code' : 'Codex'}</span>
+    <span class="t">${esc(c.title)}</span><span class="m">${c.messages} msgs · ${ago(c.updatedAt)}</span></div>`).join('');
+}
+let fConvRef = null, fConvTimer = null;
+async function loadFolderConvs() {
+  const folder = $('fFolder').value.trim().replace(/^["']|["']$/g, '');
+  fConvRef = null;
+  if (!folder) { $('fConvs').style.display = 'none'; $('fConvHint').textContent = 'Pick the project folder to see your Claude Code and Codex conversations from it.'; return; }
+  $('fConvHint').textContent = 'Looking for conversations…';
+  let list = [];
+  try { list = await api('/api/conversations?folder=' + encodeURIComponent(folder)); } catch { list = []; }
+  if (folder !== $('fFolder').value.trim().replace(/^["']|["']$/g, '')) return;
+  $('fConvHint').textContent = list.length ? 'Click one to continue it here (click again to unselect). Every agent gets it as context.' : 'No Claude Code or Codex conversations found for this folder.';
+  $('fConvs').style.display = list.length ? '' : 'none';
+  const draw = () => { $('fConvs').innerHTML = convListHtml(list, fConvRef); $('fConvs').querySelectorAll('.conv').forEach(el => el.onclick = () => { fConvRef = fConvRef === el.dataset.ref ? null : el.dataset.ref; draw(); }); };
+  draw();
+}
+['input', 'change'].forEach(ev => $('fFolder').addEventListener(ev, () => { clearTimeout(fConvTimer); fConvTimer = setTimeout(loadFolderConvs, 400); }));
+let iConvRef = null;
+$('importBtn').onclick = async () => {
+  if (!current) return;
+  iConvRef = null; $('iErr').textContent = ''; $('iGo').disabled = true;
+  $('iConvs').innerHTML = '<div class="hint" style="padding:10px">Looking for conversations…</div>';
+  $('impModal').classList.add('open');
+  let list = [];
+  try { list = await api('/api/conversations?folder=' + encodeURIComponent(current.folder)); } catch (e) { $('iErr').textContent = e.message; }
+  const draw = () => {
+    $('iConvs').innerHTML = list.length ? convListHtml(list, iConvRef) : `<div class="hint" style="padding:10px">No Claude Code or Codex conversations found for ${esc(current.folder)}.</div>`;
+    $('iConvs').querySelectorAll('.conv').forEach(el => el.onclick = () => { iConvRef = el.dataset.ref; $('iGo').disabled = false; draw(); });
+  };
+  draw();
+};
+$('iCancel').onclick = () => $('impModal').classList.remove('open');
+$('iGo').onclick = async () => {
+  try { const r = await api(`/api/sessions/${current.id}/import`, { method: 'POST', body: { ref: iConvRef } }); $('impModal').classList.remove('open'); }
+  catch (e) { $('iErr').textContent = e.message; }
+};
+
+// ---- permission levels ----
+const PERM_LABELS = { readonly: 'Read only', risky: 'Ask before risky actions', all: 'Ask before every command', full: 'Full auto' };
+function permHint(a) {
+  if (a.canAsk) return { readonly: 'Can look, not change. Commands that change things are blocked.', risky: 'Edits freely. Pushing, deleting, deploying and sending through connectors wait for your OK in the chat.', all: 'Edits freely. Every command and connector action waits for your OK.', full: 'Never asks. Use on a branch you can throw away.' }[a.permission] || '';
+  return { readonly: 'Read-only mode for this tool.', risky: `Edits inside the project. ${a.toolName} can't ask in the chat, so nothing waits for you.`, all: `Same as Ask before risky: ${a.toolName} can't ask in the chat.`, full: 'Can also run commands outside the project and use the network.' }[a.permission] || '';
+}
+
+// ---- agents and accounts manager ----
+function statusPill(a) {
+  if (!a.installed) return '<span class="pill bad">not installed</span>';
+  if (a.limited) return `<span class="pill warn" title="Hit its usage limit${a.limitedUntil ? '; usable again around ' + new Date(a.limitedUntil).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : ''}">usage limit hit${a.limitedUntil ? ' · back ' + new Date(a.limitedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>`;
+  if (!a.identity) return '<span class="pill">checking…</span>';
+  return a.identity.signedIn ? '<span class="pill ok">signed in</span>' : '<span class="pill warn">not signed in</span>';
+}
+// ---- usage meters (from the files Claude Code and Codex write) ----
+const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n);
+const atTime = (iso) => { const d = new Date(iso); const today = d.toDateString() === new Date().toDateString(); return today ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }); };
+function usageHtml(u) {
+  if (!u) return '';
+  const lim = u.limitedUntil ? `<div class="umeta" style="color:var(--warn)">Limit reached · usable again around ${atTime(u.limitedUntil)}</div>` : '';
+  if (u.kind === 'percent') {
+    if (!u.windows.length) return lim + '<div class="umeta">No Codex usage recorded on this computer in the last week.</div>';
+    return lim + u.windows.map(w => `<div class="ubar"><span class="ul">${esc(w.name)}</span><span class="track"><i style="width:${Math.min(100, w.usedPercent)}%;background:${w.usedPercent >= 90 ? 'var(--danger)' : w.usedPercent >= 70 ? 'var(--warn)' : 'var(--ok)'}"></i></span><span class="uv">${w.usedPercent}%${w.resetsAt ? ` · resets ${atTime(w.resetsAt)}` : ''}</span></div>`).join('')
+      + `<div class="umeta">Your plan's limits for this account, as Codex last recorded them${u.recordedAt ? ` (${atTime(u.recordedAt)})` : ''}.</div>`;
+  }
+  const w = u.window;
+  return lim + `<div class="umeta">${w ? `This 5-hour window: <b>${fmtTok(w.input + w.output)}</b> tokens (${fmtTok(w.output)} written), ${w.replies} replies · resets ${atTime(w.resetsAt)}` : 'No 5-hour window running now.'} · Last 7 days: <b>${fmtTok(u.week.input + u.week.output)}</b> tokens</div><div class="umeta">From this computer only; Claude Code doesn't record your plan's percentage.</div>`;
+}
+async function fillUsage(root) {
+  const boxes = root.querySelectorAll('[data-usage]'); if (!boxes.length) return;
+  let data = {}; try { data = await api('/api/usage'); } catch { return; }
+  boxes.forEach(b => { b.innerHTML = usageHtml(data[b.dataset.usage]); });
+}
+function renderAccounts() {
+  if (!$('acctModal').classList.contains('open')) return;
+  $('acctList').innerHTML = agents.map(a => `<div class="acctrow" data-id="${a.id}">
+    <div><div class="h">${tile(a.id, a.color)}<span class="handle">@${a.id}</span><span class="hint" style="margin:0;font-weight:400">${esc(a.toolName)}${a.label ? ' · ' + esc(a.label) : ''}</span>${statusPill(a)}</div>
+      <div class="sub">${a.identity && a.identity.label ? 'Account: ' + esc(a.identity.label) + (a.identity.detail ? ' · ' + esc(a.identity.detail) : '') : 'Account: unknown'}${a.separateLogin ? ' · own login folder: <code>' + esc(a.configDir) + '</code>' : ' · uses your normal login'}${a.apiKeyLocked ? ' · <span style="color:var(--warn)">API key is in the keychain; open the AgentsCircle app to use it</span>' : a.hasApiKey ? ` · API key set${a.apiKeyStore === 'keychain' ? ' (in your keychain)' : ''}` : ''}</div></div>
+    <div class="btns"><button data-act="login">Log in</button><button data-act="refresh">Check</button><button data-act="edit">Edit</button><button data-act="remove" class="ghost ib danger" data-tip="Remove this account">${ic('trash', 'sm')}</button></div>
+    <div class="usage" data-usage="${a.id}"></div>
+    <div class="permrow">${a.hasLevels ? `<span class="hint" style="margin:0">Permission</span><select class="sel perm" data-perm>${Object.entries(PERM_LABELS).map(([k, l]) => `<option value="${k}" ${a.permission === k ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="hint" style="margin:0">${esc(permHint(a))}</span>` : '<span class="hint" style="margin:0">Uses its own permission settings.</span>'}</div>
+    <div class="edit">
+      <div><label>Handle</label><input data-f="id" value="${a.id}"></div>
+      <div><label>Label</label><input data-f="label" value="${esc(a.label || '')}" placeholder="Work, Personal…"></div>
+      <div><label>Color</label><input data-f="color" type="color" value="${a.color}"></div>
+      ${a.apiKeyEnv ? `<div><label>API key</label><input data-f="apiKey" type="password" placeholder="${a.hasApiKey ? '•••• (leave empty to keep)' : 'optional'}" autocomplete="off"></div>` : '<div></div>'}
+      <div><label>Time limit per turn (minutes, empty = none)</label><input data-f="timeoutMin" type="number" min="1" max="600" value="${a.timeoutMin || ''}"></div>
+      ${a.canBudget ? `<div><label>Spending limit per turn (USD, empty = none)</label><input data-f="maxBudgetUsd" type="number" min="0" step="0.5" value="${a.maxBudgetUsd || ''}"></div>` : '<div></div>'}
+      <div class="full actions" style="margin-top:4px"><button data-act="cancel">Cancel</button><button class="primary" data-act="save">Save</button></div>
+    </div></div>`).join('') || '<div class="hint">No agents yet. Add your first account below.</div>';
+  fillUsage($('acctList'));
+  $('acctList').querySelectorAll('.acctrow').forEach(row => {
+    const id = row.dataset.id;
+    const perm = row.querySelector('[data-perm]');
+    if (perm) perm.onchange = () => api(`/api/agents/${id}`, { method: 'PATCH', body: { permission: perm.value } }).catch(e => alert(e.message));
+    row.querySelectorAll('button[data-act]').forEach(b => b.onclick = async () => {
+      const act = b.dataset.act;
+      try {
+        if (act === 'login') showLogin(await api(`/api/agents/${id}/login`, { method: 'POST' }), id);
+        if (act === 'refresh') { b.textContent = 'Checking…'; await api(`/api/agents/${id}/refresh`, { method: 'POST' }); }
+        if (act === 'edit') row.querySelector('.edit').classList.add('open');
+        if (act === 'cancel') row.querySelector('.edit').classList.remove('open');
+        if (act === 'remove' && confirm(`Remove @${id}? Its login folder stays on your computer, so you can add it back later without signing in again.`)) await api(`/api/agents/${id}`, { method: 'DELETE' });
+        if (act === 'save') {
+          const body = {}; row.querySelectorAll('[data-f]').forEach(i => { if (i.dataset.f !== 'apiKey' || i.value) body[i.dataset.f] = i.value; });
+          if (body.timeoutMin === '') body.timeoutMin = 0; if (body.maxBudgetUsd === '') body.maxBudgetUsd = 0;
+          await api(`/api/agents/${id}`, { method: 'PATCH', body });
+        }
+      } catch (e) { alert(e.message); }
+    });
+  });
+}
+function showLogin(r, id) {
+  const n = $('acctNotice');
+  n.innerHTML = `<b>A terminal window opened to sign in @${esc(id)}.</b> ${esc(r.hint || '')}<br>When you're done, click <b>Check</b> on its row.<div class="hint" style="margin-top:6px">No window? Run this in Terminal yourself: <code>${esc(r.command)}</code></div>`;
+  n.style.display = 'block';
+}
+function suggestHandle(toolId) {
+  const taken = new Set(agents.map(a => a.id));
+  if (!taken.has(toolId)) return toolId;
+  for (let i = 2; i < 50; i++) if (!taken.has(`${toolId}${i}`)) return `${toolId}${i}`;
+  return '';
+}
+function syncAddForm() {
+  const t = tools.find(x => x.id === $('aTool').value); if (!t) return;
+  $('aColor').value = t.color; $('aHandle').placeholder = `${t.id}-work`;
+  if (!$('aHandle').dataset.touched) $('aHandle').value = suggestHandle(t.id);
+  $('aSepWrap').style.display = t.canSeparate ? 'flex' : 'none';
+  $('aSep').checked = t.canSeparate && agents.some(a => a.tool === t.id);
+  $('aKeyWrap').style.display = t.apiKeyEnv ? 'block' : 'none';
+}
+$('autoSwitch').onchange = () => api('/api/app/settings', { method: 'PATCH', body: { autoSwitch: $('autoSwitch').checked } }).catch(e => alert(e.message));
+async function loadAutoSwitch() { try { const a = await api('/api/app'); $('autoSwitch').checked = a.settings.autoSwitch !== false; } catch {} }
+loadAutoSwitch();
+function openAccounts() {
+  loadAutoSwitch();
+  $('aTool').innerHTML = tools.map(t => `<option value="${t.id}" ${t.installed ? '' : 'disabled'}>${esc(t.name)}${t.installed ? '' : ' (not installed)'}</option>`).join('');
+  const first = tools.find(t => t.installed); if (first) $('aTool').value = first.id;
+  delete $('aHandle').dataset.touched; $('aLabel').value = ''; $('aKey').value = ''; $('aErr').textContent = ''; $('acctNotice').style.display = 'none';
+  syncAddForm();
+  $('acctModal').classList.add('open'); renderAccounts();
+}
+function setSettingsTab(tab) {
+  for (const [k, id] of [['accounts', 'setAccounts'], ['connectors', 'setConnectors'], ['skills', 'setSkills'], ['appearance', 'setAppearance'], ['about', 'setAbout']]) $(id).style.display = k === tab ? '' : 'none';
+  if (tab === 'about' && typeof loadAbout === 'function') loadAbout();
+  if (tab === 'skills' && typeof loadSkills === 'function') loadSkills();
+  document.querySelectorAll('#setTabs button').forEach(b => b.classList.toggle('on', b.dataset.set === tab));
+  if (tab === 'connectors' && typeof loadConnectors === 'function') loadConnectors();
+}
+function openSettings(tab) { openAccounts(); setSettingsTab(tab || 'accounts'); }
+document.querySelectorAll('#setTabs button').forEach(b => b.onclick = () => setSettingsTab(b.dataset.set));
+$('acctBtn').onclick = () => openSettings('accounts');
+$('setClose').onclick = () => $('acctModal').classList.remove('open');
+$('aTool').onchange = () => { delete $('aHandle').dataset.touched; syncAddForm(); };
+$('aHandle').oninput = () => { $('aHandle').dataset.touched = '1'; };
+$('aAdd').onclick = async () => {
+  $('aErr').textContent = '';
+  try {
+    const t = tools.find(x => x.id === $('aTool').value);
+    const a = await api('/api/agents', { method: 'POST', body: { tool: t.id, id: $('aHandle').value, label: $('aLabel').value, color: $('aColor').value, separateLogin: t.canSeparate && $('aSep').checked, apiKey: $('aKey').value || undefined } });
+    delete $('aHandle').dataset.touched; $('aLabel').value = ''; $('aKey').value = ''; syncAddForm();
+    if (a.separateLogin && !(a.identity && a.identity.signedIn)) showLogin(await api(`/api/agents/${a.id}/login`, { method: 'POST' }), a.id);
+    else { $('acctNotice').innerHTML = `Added <b>@${esc(a.id)}</b>.`; $('acctNotice').style.display = 'block'; }
+    if (current && !current.members.includes(a.id)) await api('/api/sessions/' + current.id, { method: 'PATCH', body: { members: [...current.members, a.id] } });
+  } catch (e) { $('aErr').textContent = e.message; }
+};
+
+(async () => {
+  [agents, tools] = await Promise.all([api('/api/agents'), api('/api/tools')]);
+  api('/api/connectors').then(l => { sharedNames = l.map(c => c.name); }).catch(() => {});
+  connect(); await loadSessions();
+  const last = localStorage.getItem('agentscircle:last');
+  if (last && sessions.find(s => s.id === last)) openSession(last);
+  else renderWelcome();
+})();
+</script>
+<script src="/panel.js"></script>
+<script src="/attention.js"></script>
+<script src="/connectors.js"></script>
+<script src="/collab.js"></script>
+<script src="/desktop.js"></script>
+<script src="/look.js"></script>
+</body>
+</html>

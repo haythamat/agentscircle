@@ -1,0 +1,177 @@
+{
+  "revision": 1,
+  "_readme": "Tools are the agent programs AgentsCircle knows how to run. Your accounts (handles like @claude-work) are created in the app and saved in ~/.agentscircle/agents.json. In args, {PROMPT} becomes the full prompt; \"stdin\": true pipes it in instead. \"configEnv\" is the environment variable that points a tool at a separate login folder, which is how several accounts of one tool work side by side. \"mcp\" says how AgentsCircle passes shared connectors to the tool: \"claude\" (an extra --mcp-config file), \"codex\" (-c mcp_servers overrides), \"cursor\" (a temporary entry in the project's .cursor/mcp.json, put back after the run) or \"opencode\" (OPENCODE_CONFIG_CONTENT). Tools without it keep only their own connectors. \"permissionArgs\" are the flags for each permission level (readonly, risky = ask before risky actions, all = ask before every command, full = full auto). \"approvals\": \"prompt-tool\" means the tool can ask you in the chat (Claude Code).",
+  "tools": [
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "color": "#d97757",
+      "command": "claude",
+      "args": [
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose"
+      ],
+      "stdin": true,
+      "parser": "claude-stream",
+      "configEnv": "CLAUDE_CONFIG_DIR",
+      "loginArgs": [],
+      "loginHint": "Claude Code opens. Type /login if it doesn't ask you to sign in, then close the window.",
+      "mcp": "claude",
+      "permissionArgs": {
+        "readonly": [
+          "--permission-mode",
+          "default",
+          "--disallowedTools",
+          "Edit,Write,MultiEdit,NotebookEdit"
+        ],
+        "risky": [
+          "--permission-mode",
+          "acceptEdits"
+        ],
+        "all": [
+          "--permission-mode",
+          "acceptEdits"
+        ],
+        "full": [
+          "--permission-mode",
+          "acceptEdits"
+        ]
+      },
+      "approvals": "prompt-tool",
+      "budgetArg": "--max-budget-usd"
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "color": "#10a37f",
+      "command": "codex",
+      "args": [
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "stdin": true,
+      "parser": "codex-json",
+      "configEnv": "CODEX_HOME",
+      "loginArgs": [
+        "login"
+      ],
+      "loginHint": "Sign in in the browser window that opens, then close the terminal.",
+      "mcp": "codex",
+      "permissionArgs": {
+        "readonly": [
+          "--sandbox",
+          "read-only"
+        ],
+        "risky": [
+          "--sandbox",
+          "workspace-write"
+        ],
+        "all": [
+          "--sandbox",
+          "workspace-write"
+        ],
+        "full": [
+          "--sandbox",
+          "danger-full-access"
+        ]
+      },
+      "permissionInsertAfter": 1,
+      "imageArg": "-i",
+      "imageInsertAfter": 1
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "color": "#7c8cff",
+      "command": "cursor-agent",
+      "altCommands": [
+        "agent"
+      ],
+      "args": [
+        "-p",
+        "--trust",
+        "--output-format",
+        "stream-json",
+        "{PROMPT}"
+      ],
+      "stdin": false,
+      "parser": "claude-stream",
+      "apiKeyEnv": "CURSOR_API_KEY",
+      "loginArgs": [
+        "login"
+      ],
+      "statusArgs": [
+        "status"
+      ],
+      "loginHint": "For a second Cursor account, paste that account's API key instead of logging in.",
+      "permissionArgs": {
+        "readonly": [
+          "--mode",
+          "ask"
+        ],
+        "risky": [
+          "--force"
+        ],
+        "all": [
+          "--force"
+        ],
+        "full": [
+          "--force"
+        ]
+      },
+      "permissionInsertAfter": 2,
+      "mcp": "cursor",
+      "longPromptViaFile": true
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "color": "#e5c07b",
+      "command": "opencode",
+      "args": [
+        "run",
+        "--format",
+        "json",
+        "{PROMPT}"
+      ],
+      "stdin": false,
+      "parser": "opencode-json",
+      "loginArgs": [
+        "auth",
+        "login"
+      ],
+      "loginHint": "Pick a provider and sign in, then close the terminal.",
+      "mcp": "opencode",
+      "permissionArgs": {
+        "readonly": [
+          "--agent",
+          "plan"
+        ],
+        "risky": [],
+        "all": [],
+        "full": []
+      },
+      "permissionInsertAfter": 1,
+      "longPromptViaFile": true
+    },
+    {
+      "id": "mock",
+      "name": "Mock (test agent)",
+      "color": "#888888",
+      "command": "node",
+      "args": [
+        "{APP}/src/mock-agent.js"
+      ],
+      "stdin": true,
+      "parser": "text",
+      "configEnv": "MOCK_CONFIG_DIR",
+      "hidden": true,
+      "mcp": "claude",
+      "approvals": "prompt-tool"
+    }
+  ]
+}
