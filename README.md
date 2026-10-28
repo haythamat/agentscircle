@@ -193,7 +193,7 @@ Undo needs git in the folder; for folders without it, AgentsCircle offers to run
 
 **Limits per agent:** a time limit per turn (default 30 minutes) and, for Claude Code, a spending limit per turn (`--max-budget-usd`).
 
-## Known limits in 1.2
+## Known limits in 1.3
 
 - In Parallel mode, a hand-off goes to the other agent's own branch; it sees the conversation but not the first agent's files until you apply them.
 - A conversation brought in from Claude Code or Codex becomes shared context; the agent doesn't resume its own CLI session (the original stays in Claude Code / Codex, where `claude --resume` or `codex resume` still works).
@@ -201,3 +201,13 @@ Undo needs git in the folder; for folders without it, AgentsCircle offers to run
 - In Cursor, the circle tools are added to the project's `.cursor/mcp.json` for the length of a turn and removed afterwards.
 - Usage meters: Claude Code's are token counts from this computer, not your plan's percentage; Codex's percentages are as of the last Codex turn on this computer.
 - Notifications need the app to be running (a turn that finishes after you quit won't notify you).
+
+## License
+
+AgentsCircle is source-available under the [Functional Source License 1.1, Apache 2.0 future license](LICENSE.md) (FSL-1.1-ALv2).
+
+- You can use, read, change and share it for anything except building a competing product or service: use it at work, run it for your team, learn from it, fix it.
+- Each release becomes Apache 2.0, a standard open-source license, two years after it is published.
+- "AgentsCircle" and its logo are trademarks of ORBITA FOR COMPUTER PROGRAMMING LLC and are not covered by the license.
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).

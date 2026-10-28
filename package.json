@@ -13,7 +13,7 @@
     "tools:keygen": "node scripts/keygen.js",
     "tools:sign": "node scripts/sign-tools.js"
   },
-  "license": "UNLICENSED",
+  "license": "FSL-1.1-ALv2",
   "dependencies": {
     "adm-zip": "^0.6.1",
     "cross-spawn": "^7.0.6",
