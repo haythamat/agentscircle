@@ -1,12 +1,26 @@
 # Builds signed installers and publishes them to GitHub Releases when you push a version tag:
 #   git tag v1.0.0 && git push origin v1.0.0        -> stable release
 #   git tag v1.1.0-beta.1 && git push origin v1.1.0-beta.1   -> beta (pre-release)
+# Or, without pushing a tag: GitHub → Actions → Release → Run workflow, and enter the version.
 # Installed apps find the new version automatically. See RELEASING.md for the one-time setup.
 name: Release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the v (e.g. 1.3.0, or 1.4.0-beta.1 for a beta)'
+        required: true
+      publish:
+        description: 'Publish the release when the builds finish (leave off to keep it as a draft you check first)'
+        type: boolean
+        default: false
+
+env:
+  # The release tag: from the pushed tag, or "v" + the version typed in Run workflow.
+  TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
 
 permissions:
   contents: write
@@ -29,7 +43,7 @@ jobs:
       - name: Set version and repository
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${TAG#v}"
           npm pkg set version="$VERSION"
           npm pkg set repository.url="https://github.com/${GITHUB_REPOSITORY}"
       - name: Build and upload
@@ -52,6 +66,7 @@ jobs:
 
   publish:
     needs: build
+    if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-latest
     steps:
       # electron-builder uploads to a draft; publish it once every platform is done.
@@ -59,5 +74,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then PRE="--prerelease"; else PRE="--latest"; fi
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false $PRE
+          if [[ "$TAG" == *-* ]]; then PRE="--prerelease"; else PRE="--latest"; fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --target "$GITHUB_SHA" $PRE

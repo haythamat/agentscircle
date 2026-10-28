@@ -44,6 +44,8 @@ git tag v1.0.1 && git push origin v1.0.1          # stable
 git tag v1.1.0-beta.1 && git push origin v1.1.0-beta.1   # beta (pre-release)
 ```
 
+Or without a terminal: on GitHub open **Actions → Release → Run workflow**, type the version (for example `1.3.1`, or `1.4.0-beta.1` for a beta) and click **Run workflow**. Leave **Publish** off to get a draft release you can check first, then publish it from the Releases page.
+
 The tag sets the version. GitHub Actions builds macOS (Apple Silicon and Intel), Windows (x64 and ARM) and Linux, then publishes the release. Stable users get stable tags; people who picked the Beta channel in Settings → About also get `-beta` tags.
 
 ## Changing how data is stored
