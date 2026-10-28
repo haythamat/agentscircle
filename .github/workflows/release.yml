@@ -37,7 +37,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          # No npm cache: it counts against the account's Actions storage.
       - run: npm ci
       # The version in the tag wins, and releases are tied to this repository.
       - name: Set version and repository
