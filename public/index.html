@@ -45,10 +45,12 @@
     <div class="tools">
       <button class="ghost" id="modeBtn">Mode</button>
       <button class="ghost" id="handoffBtn">Hand-offs</button>
+      <button class="ghost" id="ctxBtn" data-tip="Files, images and notes every agent gets with each task"></button>
       <span class="sep"></span>
       <button class="ghost ib" id="importBtn" data-tip="Bring in a Claude Code or Codex conversation"></button>
       <button class="ghost ib" id="exportBtn" data-tip="Export the transcript as Markdown"></button>
       <button class="ghost ib" id="panelBtn" data-tip="Board, files and usage  ⌘J"></button>
+      <button class="ghost ib" id="sessMenuBtn" data-tip="Session options" aria-label="Session options" aria-haspopup="menu"></button>
     </div>
   </header>
   <div class="memberbar" id="memberbar" style="display:none"><span class="lead">In this circle</span><div class="chips" id="chips"></div></div>
@@ -71,7 +73,8 @@
 </main>
 
 <section id="panel">
-  <div class="phead"><div id="panelTabs"><button data-tab="progress">Board<span class="n"></span></button><button data-tab="files">Files<span class="n"></span></button><button data-tab="used">Usage</button><button data-tab="branches" style="display:none">Branches</button></div><button id="panelClose" data-tip="Close panel  ⌘J"></button></div>
+  <div id="panelGrip" role="separator" aria-orientation="vertical" aria-label="Resize the panel" tabindex="0" data-tip="Drag to resize · double-click to expand"></div>
+  <div class="phead"><div id="panelTabs"><button data-tab="progress">Board<span class="n"></span></button><button data-tab="files">Files<span class="n"></span></button><button data-tab="used">Usage</button><button data-tab="branches" style="display:none">Branches</button></div><button id="panelExpand" data-tip="Expand panel" aria-label="Expand panel"></button><button id="panelClose" data-tip="Close panel  ⌘J"></button></div>
   <div id="panelBody"></div>
 </section>
 
@@ -105,10 +108,39 @@
     <label>Continue a conversation <span class="hint" style="font-weight:400">optional</span></label>
     <div class="hint" id="fConvHint" style="margin-top:0">Choose the project folder to see your Claude Code and Codex conversations from it.</div>
     <div class="convlist" id="fConvs" style="display:none"></div>
-    <label for="fContext">Or paste context from another chat <span class="hint" style="font-weight:400">optional</span></label>
-    <textarea id="fContext" rows="3" placeholder="A summary from Claude, ChatGPT or Cursor, so every agent starts with it."></textarea>
+    <label for="fContext">Session context <span class="hint" style="font-weight:400">optional</span></label>
+    <div class="ctxfield" id="fCtxField">
+      <textarea id="fContext" rows="3" placeholder="Notes, requirements or a summary from another chat. Every agent gets this with each task."></textarea>
+      <div class="ctxfiles" id="fCtxFiles"></div>
+      <div class="ctxbar"><button type="button" class="ghost" id="fCtxAdd"></button><span class="hint" style="margin:0">Or drop or paste files and images here</span></div>
+      <input type="file" id="fCtxInput" multiple style="display:none">
+    </div>
     <div class="err" id="fErr"></div>
     <div class="actions"><button id="fCancel">Cancel</button><button class="primary" id="fCreate">Create session</button></div>
+  </div>
+</div>
+
+<div class="modal" id="ctxModal">
+  <div class="card ctxcard" role="dialog" aria-labelledby="ctxTitle">
+    <h3 id="ctxTitle">Session context</h3>
+    <p class="lead">Every agent in this session gets this with each task: notes, requirements, designs, screenshots, documents.</p>
+    <div class="ctxfield" id="ctxField">
+      <textarea id="ctxText" rows="7" placeholder="What should every agent know? For example: the goal, constraints, the style guide, links, decisions already made."></textarea>
+      <div class="ctxfiles" id="ctxFiles"></div>
+      <div class="ctxbar"><button type="button" class="ghost" id="ctxAdd"></button><span class="hint" style="margin:0">Or drop or paste files and images here · up to 25 MB each</span></div>
+      <input type="file" id="ctxInput" multiple style="display:none">
+    </div>
+    <div class="hint">Files are copied into <code>.agentscircle/context</code> in the project folder, kept out of git, and removed when you delete the session.</div>
+    <div class="err" id="ctxErr"></div>
+    <div class="actions"><span class="hint" id="ctxSaved" style="margin:0 auto 0 0"></span><button id="ctxCancel">Cancel</button><button class="primary" id="ctxSave">Save</button></div>
+  </div>
+</div>
+
+<div class="modal" id="askModal">
+  <div class="card" style="width:min(440px,94vw)" role="alertdialog" aria-labelledby="askTitle" aria-describedby="askBody">
+    <h3 id="askTitle"></h3>
+    <p class="lead" id="askBody"></p>
+    <div class="actions"><button id="askNo">Cancel</button><button id="askYes"></button></div>
   </div>
 </div>
 
@@ -234,8 +266,8 @@ async function loadSessions() {
   sessions = await api('/api/sessions');
   const folderName = (f) => String(f || '').split(/[\\/]/).filter(Boolean).pop() || f;
   $('sessions').innerHTML = sessions.map(s => `<div class="sess ${current && s.id === current.id ? 'active' : ''}" data-id="${s.id}" title="${esc(s.folder)}">
-    <div class="n"><span class="name">${esc(s.name)}</span><span class="state">${s.waiting ? '<span class="needdot" title="Waiting for you"></span>' : s.busy ? '<span class="busy" title="Working"></span>' : ''}</span></div><div class="f">${esc(folderName(s.folder))} · ${ago(s.updatedAt)}</div></div>`).join('') || '<div class="hint" style="padding:6px 10px">No sessions yet. Create one to start a circle.</div>';
-  document.querySelectorAll('.sess').forEach(el => el.onclick = () => openSession(el.dataset.id));
+    <div class="n"><span class="name">${esc(s.name)}</span><span class="state">${s.waiting ? '<span class="needdot" title="Waiting for you"></span>' : s.busy ? '<span class="busy" title="Working"></span>' : ''}</span><button class="sact" data-sact="${s.id}" aria-label="Options for ${esc(s.name)}" aria-haspopup="menu">${ic('dots', 'sm')}</button></div><div class="f">${esc(folderName(s.folder))} · ${ago(s.updatedAt)}</div></div>`).join('') || '<div class="hint" style="padding:6px 10px">No sessions yet. Create one to start a circle.</div>';
+  document.querySelectorAll('.sess').forEach(el => el.onclick = (e) => { if (!e.target.closest('.sact, .rename')) openSession(el.dataset.id); });
 }
 
 async function openSession(id) {
@@ -259,6 +291,16 @@ async function openSession(id) {
   }
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
   $('input').focus();
+}
+
+// The open session was deleted (here or in another window): back to the start screen.
+function leaveSession() {
+  current = null; queue = []; running = [];
+  document.body.classList.remove('has-session');
+  try { localStorage.removeItem('agentscircle:last'); } catch { /* private window */ }
+  $('header').style.display = 'none'; $('composer').style.display = 'none'; $('memberbar').style.display = 'none';
+  const gb = $('gitBanner'); if (gb) gb.remove();
+  renderWelcome();
 }
 
 function renderChips() {
@@ -390,8 +432,9 @@ function msgHtml(m) {
     return `<div class="msg system" id="m-${m.id}"><div class="body" style="width:100%;max-width:none"><details class="sumbox"><summary>${ic('chevronRight', 'sm')}${esc(firstLine)}</summary><div class="txt">${md(m.text.split('\n').slice(1).join('\n'))}</div></details></div></div>`;
   }
   if (m.role === 'system') {
-    const icon = m.kind === 'switch' ? 'refresh' : m.kind === 'commit' ? 'commit' : m.kind === 'hint' ? 'info' : 'info';
-    return `<div class="msg system${m.kind === 'hint' ? ' notice' : ''}" id="m-${m.id}"><div class="body">${ic(icon, 'sm')}${md(m.text).replace(/^<p>|<\/p>$/g, '')}</div></div>`;
+    const icon = m.kind === 'switch' ? 'refresh' : m.kind === 'commit' ? 'commit' : m.kind === 'useredit' ? 'pencil' : 'info';
+    const edit = m.kind === 'useredit' && m.editPath ? ` <button class="linkbtn" data-openedit="${esc(m.editPath)}" data-wt="${esc(m.editWt || '')}">Open</button>` : '';
+    return `<div class="msg system${m.kind === 'hint' ? ' notice' : ''}${m.kind === 'useredit' ? ' useredit' : ''}" id="m-${m.id}"><div class="body">${ic(icon, 'sm')}${md(m.text).replace(/^<p>|<\/p>$/g, '')}${edit}</div></div>`;
   }
   const a = m.agent && agentMap()[m.agent];
   const color = a ? a.color : '';
@@ -467,7 +510,7 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 1000);
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
-    if (ev.type === 'sessions') { loadSessions(); return; }
+    if (ev.type === 'sessions') { if (ev.deleted && current && current.id === ev.deleted) leaveSession(); loadSessions(); return; }
     if (typeof handleAttentionEvent === 'function' && handleAttentionEvent(ev)) return;
     if (ev.type === 'members' && current) { current.members = ev.members; renderChips(); renderStatus(); return; }
     if (ev.type === 'connectors') { if (typeof conn !== 'undefined') { conn.list = ev.connectors; if ($('acctModal').classList.contains('open') && $('setConnectors').style.display !== 'none' && !$('cfName')) renderConnectors(); } sharedNames = ev.connectors.map(c => c.name); return; }
@@ -482,7 +525,7 @@ function connect() {
     if (ev.type === 'status') { const was = running.length; running = ev.running || []; renderStatus(); loadSessions(); if (running.length < was) refreshOpenFile(); }
     if (ev.type === 'branches' && typeof refreshBranches === 'function') refreshBranches();
     if (ev.type === 'queue') { queue = ev.queue; renderStatus(); }
-    if (ev.type === 'session') { if (ev.reload) return openSession(current.id); Object.assign(current, ev.session); renderChips(); renderStatus(); if (typeof renderHandoffBtn === 'function') renderHandoffBtn(); if (typeof renderModeBtn === 'function') renderModeBtn(); }
+    if (ev.type === 'session') { if (ev.reload) return openSession(current.id); Object.assign(current, ev.session); renderChips(); renderStatus(); if (typeof renderCtxBtn === 'function') renderCtxBtn(); if (typeof renderHandoffBtn === 'function') renderHandoffBtn(); if (typeof renderModeBtn === 'function') renderModeBtn(); }
     if (ev.type === 'summarizing') { $('status').innerHTML = `Summarizing the earlier conversation with <b>@${esc(ev.by)}</b> so every agent keeps the full story…`; }
   };
 }
@@ -544,6 +587,7 @@ $('fCreate').onclick = async () => {
   try {
     const members = [...$('fAgents').querySelectorAll('input:checked')].map(i => i.value);
     const s = await api('/api/sessions', { method: 'POST', body: { folder: $('fFolder').value.replace(/^["']|["']$/g, ''), name: $('fName').value, members, context: $('fContext').value, importRef: fConvRef } });
+    if (typeof uploadNewSessionContext === 'function') { $('fCreate').textContent = 'Adding context…'; await uploadNewSessionContext(s.id); }
     $('modal').classList.remove('open'); await loadSessions(); openSession(s.id);
   } catch (e) { $('fErr').textContent = e.message; }
 };
@@ -751,6 +795,7 @@ $('aAdd').onclick = async () => {
 <script src="/collab.js"></script>
 <script src="/desktop.js"></script>
 <script src="/github.js"></script>
+<script src="/session.js"></script>
 <script src="/look.js"></script>
 </body>
 </html>

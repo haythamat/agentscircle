@@ -171,6 +171,6 @@ document.addEventListener('keydown', (e) => {
   if (!typing && e.key === '/' && current) { e.preventDefault(); $('input').focus(); }
 });
 // Clicking the dimmed area around a dialog closes it.
-document.querySelectorAll('.modal').forEach((m) => m.addEventListener('mousedown', (e) => { if (e.target === m && m.id !== 'setupModal') m.classList.remove('open'); }));
+document.querySelectorAll('.modal').forEach((m) => m.addEventListener('mousedown', (e) => { if (e.target === m && !['setupModal', 'ctxModal', 'askModal'].includes(m.id)) m.classList.remove('open'); }));
 
 applyLook();

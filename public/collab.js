@@ -37,7 +37,7 @@ $('input').addEventListener('paste', (e) => {
   if (files.length) { e.preventDefault(); uploadFiles(files); }
 });
 let dragDepth = 0;
-document.addEventListener('dragenter', (e) => { if (current && [...(e.dataTransfer.types || [])].includes('Files')) { dragDepth++; document.body.classList.add('dragging'); } });
+document.addEventListener('dragenter', (e) => { if ((current || document.querySelector('.modal.open')) && [...(e.dataTransfer.types || [])].includes('Files')) { dragDepth++; document.body.classList.add('dragging'); } });
 document.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) document.body.classList.remove('dragging'); });
 document.addEventListener('dragover', (e) => { if (current) e.preventDefault(); });
 document.addEventListener('drop', (e) => {

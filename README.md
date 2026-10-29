@@ -48,6 +48,13 @@ Claude Code, Codex and Cursor report their tools, task lists and token usage (co
 
 Sessions are saved in `~/.agentscircle/sessions`.
 
+## Session context, editing and the panel (v1.3.2)
+
+- **Session context:** give a session notes, requirements, files and images (designs, screenshots, specs) that every agent gets with each task. Add it in **New session**, or later with **Context** in the session header. You can paste or drop files and images. Files are copied into `.agentscircle/context/<session>` in the project folder and kept out of git.
+- **Rename and delete sessions:** hover a session in the sidebar and click **…**, or right-click it. You can also use the **…** button at the top right of an open session. Deleting removes the conversation and its context files from AgentsCircle; your project folder isn't touched. ⌘⌫ (Ctrl+Backspace) deletes the open session after asking.
+- **Resizable panel:** drag the panel's edge to make it wider (or taller when it sits below the chat). Double-click the edge or use the expand button to give it as much room as the chat allows; click again to go back. The size is remembered.
+- **Edit files in the panel:** open a file from the Files tab, a file chip or an attachment, and use **Edit**. It has line numbers, Tab and Shift+Tab indenting, and keeps your indentation on new lines. Save with ⌘S (Ctrl+S). Unsaved edits stay while you move around the panel. If an agent changed the file after you opened it, AgentsCircle asks before overwriting. Every save adds a note to the chat, so the next agent knows you changed the file.
+
 ## Continue a conversation from Claude Code or Codex (v1.1)
 
 Started something in Claude Code or Codex in a terminal? In **New session**, pick the project folder and AgentsCircle lists the conversations you had there (from every Claude Code and Codex account it knows). Click one, create the session, and its messages are added to the chat, so every agent can continue from it. In an open session, **Bring in a chat** does the same. Only the text between you and the agent is brought in, not tool output. Long conversations are summarized automatically before the next turn.

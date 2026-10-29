@@ -90,7 +90,7 @@ function saveSession(s) {
   fs.writeFileSync(sessionFile(s.id), JSON.stringify(persist, null, 2));
 }
 
-const summary = (s) => ({ id: s.id, name: s.name, folder: s.folder, members: s.members, updatedAt: s.updatedAt, busy: busy(s), waiting: s.messages.some((m) => m.pending && m.waiting), running: runningIds(s), handoffs: s.handoffs !== false, summarized: s.summary ? s.summary.count : 0, mode: s.mode === 'parallel' ? 'parallel' : 'shared' });
+const summary = (s) => ({ id: s.id, name: s.name, folder: s.folder, members: s.members, updatedAt: s.updatedAt, busy: busy(s), waiting: s.messages.some((m) => m.pending && m.waiting), running: runningIds(s), handoffs: s.handoffs !== false, summarized: s.summary ? s.summary.count : 0, context: contextInfo(s), mode: s.mode === 'parallel' ? 'parallel' : 'shared' });
 
 // ---------- websocket broadcast ----------
 const subscribers = new Map(); // sessionId -> Set<ws>
@@ -116,6 +116,12 @@ function addMessage(s, msg) {
   broadcast(s.id, { type: 'message', message: m });
   return m;
 }
+
+// ---------- session context (text, files and images the user gives the whole session) ----------
+const CONTEXT_TEXT_CAP = 40000;
+const ctxOf = (s) => (s.context ||= { text: '', files: [] });
+const contextInfo = (s) => { const c = s.context || {}; return { files: (c.files || []).length, text: !!(c.text || '').trim() }; };
+const contextDir = (s) => path.join(s.folder, '.agentscircle', 'context', s.id);
 
 function updateMessage(s, m, patch, persist = false) {
   const wasWaiting = !!m.waiting;
@@ -211,6 +217,7 @@ function buildPrompt(s, agent, triggerMsg, wt, circleTools = false) {
       ? `To hand part of the work to another agent, call the mention tool. Only hand off when another agent is clearly better placed or the user asked for it. Don't hand back and forth.`
       : `To hand part of the work to another agent, end your reply with one line per hand-off, exactly like: "@codex: write tests for the login form". Only hand off when another agent is clearly better placed or the user asked for it. Don't hand back and forth.`] : []),
     ...(sharedSkills.length ? ['', '### SHARED SKILLS', 'Before a task that matches one of these, read its SKILL.md and follow it:', ...sharedSkills.map((k) => `- ${k.name}: ${k.description} (${k.file})`)] : []),
+    ...contextBlock(s, wt),
     '',
     '### PROJECT STATE',
     projectState(wt ? wt.dir : s.folder),
@@ -227,6 +234,18 @@ function buildPrompt(s, agent, triggerMsg, wt, circleTools = false) {
     'Do what the new message asks. When you finish, reply briefly: what you did, which files you changed, and anything the other agents should know.',
     'End your reply with one last line exactly like "Status: <where things stand, in under 12 words>".',
   ].join('\n');
+}
+
+function contextBlock(s, wt) {
+  const c = s.context || {};
+  const text = (c.text || '').trim();
+  const files = c.files || [];
+  if (!text && !files.length) return [];
+  return ['', '### SESSION CONTEXT (from the user, for the whole session)',
+    'The user attached this to the session so every agent works with it. Treat it as background for every task here.',
+    ...(text ? ['', text] : []),
+    ...(files.length ? ['', 'Context files (open the ones that matter for your task; images are screenshots or designs):',
+      ...files.map((f) => `- ${wt ? path.join(s.folder, f.path) : f.path}${f.kind === 'image' ? ' (image)' : ''}${f.name && f.name !== path.basename(f.path) ? ` "${f.name}"` : ''}`)] : [])];
 }
 
 // Which files did this agent touch? Compare git state before and after its turn.
@@ -1069,9 +1088,7 @@ app.post('/api/sessions', (req, res) => {
     id: uid(), name: (req.body.name || path.basename(folder)).slice(0, 80), folder, members,
     defaultAgent: members[0] || null, createdAt: now(), updatedAt: now(), messages: [], queue: [], runs: new Map(),
   };
-  if (req.body.context && req.body.context.trim()) {
-    s.messages.push({ id: uid(), at: now(), role: 'user', imported: true, text: `Context imported from another chat:\n\n${req.body.context.trim()}` });
-  }
+  if (typeof req.body.context === 'string' && req.body.context.trim()) s.context = { text: req.body.context.trim().slice(0, CONTEXT_TEXT_CAP), files: [] };
   sessions.set(s.id, s);
   saveSession(s);
   if (req.body.importRef) { try { importConversation(s, String(req.body.importRef)); } catch (e) { addMessage(s, { role: 'system', text: `Couldn't bring in that conversation: ${e.message}` }); } }
@@ -1165,6 +1182,10 @@ app.delete('/api/sessions/:id', (req, res) => {
   for (const id of Object.keys(s.worktrees || {})) worktrees.discard(s, id);
   sessions.delete(s.id);
   fs.rmSync(sessionFile(s.id), { force: true });
+  // Our own copies of the session's context files; the rest of the project folder is never touched.
+  try { fs.rmSync(contextDir(s), { recursive: true, force: true }); } catch { /* already gone */ }
+  broadcastAll({ type: 'sessions', deleted: s.id });
+  broadcastAttention();
   res.json({ ok: true });
 });
 
@@ -1432,6 +1453,58 @@ app.post('/api/sessions/:id/uploads', express.raw({ type: () => true, limit: '25
   res.json({ path: `.agentscircle/uploads/${file}`, name, size: (req.body || []).length, kind: kindOf(file) });
 });
 
+// ---------- session context ----------
+app.get('/api/sessions/:id/context', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const c = ctxOf(s);
+  res.json({ text: c.text || '', files: c.files.map((f) => { let exists = false; try { exists = fs.statSync(path.join(s.folder, f.path)).isFile(); } catch { /* removed */ } return { ...f, exists }; }) });
+});
+
+app.put('/api/sessions/:id/context', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const c = ctxOf(s);
+  if (typeof req.body.text === 'string') c.text = req.body.text.slice(0, CONTEXT_TEXT_CAP);
+  saveSession(s);
+  broadcast(s.id, { type: 'session', session: { ...summary(s), defaultAgent: s.defaultAgent } });
+  broadcastAll({ type: 'sessions' });
+  res.json({ text: c.text, files: c.files });
+});
+
+app.post('/api/sessions/:id/context/files', express.raw({ type: () => true, limit: '25mb' }), (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const c = ctxOf(s);
+  if (c.files.length >= 40) return res.status(400).json({ error: 'A session can have up to 40 context files.' });
+  const name = decodeURIComponent(String(req.headers['x-filename'] || 'file')).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim().slice(-120) || 'file';
+  const dir = contextDir(s);
+  fs.mkdirSync(dir, { recursive: true });
+  ensureExcluded(s.folder);
+  let file = name.replace(/[^\w.\- ]+/g, '_'), n = 1;
+  while (fs.existsSync(path.join(dir, file))) { const i = name.lastIndexOf('.'); file = (i > 0 ? name.slice(0, i) : name).replace(/[^\w.\- ]+/g, '_') + `-${++n}` + (i > 0 ? name.slice(i).replace(/[^\w.\- ]+/g, '_') : ''); }
+  fs.writeFileSync(path.join(dir, file), req.body || Buffer.alloc(0));
+  const entry = { path: path.posix.join('.agentscircle', 'context', s.id, file), name, size: (req.body || []).length, kind: kindOf(file), addedAt: now() };
+  c.files.push(entry);
+  saveSession(s);
+  broadcast(s.id, { type: 'session', session: { ...summary(s), defaultAgent: s.defaultAgent } });
+  broadcastAll({ type: 'sessions' });
+  res.json(entry);
+});
+
+app.delete('/api/sessions/:id/context/files', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const c = ctxOf(s);
+  const p = String(req.query.path || '');
+  const i = c.files.findIndex((f) => f.path === p);
+  if (i < 0) return res.status(404).json({ error: 'That file isn\'t in the session context.' });
+  c.files.splice(i, 1);
+  // Delete it only if it's our copy inside the session's context folder.
+  const full = safePath(s, p);
+  if (full && path.relative(contextDir(s), full).split(path.sep)[0] !== '..') { try { fs.rmSync(full, { force: true }); } catch { /* fine */ } }
+  saveSession(s);
+  broadcast(s.id, { type: 'session', session: { ...summary(s), defaultAgent: s.defaultAgent } });
+  broadcastAll({ type: 'sessions' });
+  res.json({ ok: true });
+});
+
 // ---------- search across sessions ----------
 app.get('/api/search', (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
@@ -1575,6 +1648,36 @@ app.get('/api/sessions/:id/file', (req, res) => {
     out.content = buf.slice(0, 512 * 1024).toString('utf8');
   }
   res.json(out);
+});
+
+// Save your own edit to a file from the panel's editor.
+const EDITABLE = new Set(['text', 'markdown', 'html']);
+app.put('/api/sessions/:id/file', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const b = req.body || {};
+  const full = safePath(s, b.path, b.wt);
+  if (!full) return res.status(400).json({ error: 'That file is outside the project folder.' });
+  if (typeof b.content !== 'string') return res.status(400).json({ error: 'Nothing to save.' });
+  let st; try { st = fs.statSync(full); } catch { return res.status(404).json({ error: 'This file no longer exists.' }); }
+  const kind = kindOf(full);
+  if (!(EDITABLE.has(kind) || (kind === 'image' && extOf(full) === 'svg'))) return res.status(400).json({ error: 'This kind of file can\'t be edited here.' });
+  if (st.size > 512 * 1024) return res.status(400).json({ error: 'Files over 512 KB can\'t be edited here. Use Open.' });
+  // Someone (an agent, or you in another app) changed it after you opened it.
+  if (b.baseModifiedAt && !b.force && Math.abs(st.mtime.getTime() - new Date(b.baseModifiedAt).getTime()) > 1) {
+    return res.status(409).json({ error: 'This file changed since you opened it.', conflict: true, modifiedAt: st.mtime.toISOString() });
+  }
+  fs.writeFileSync(full, b.content);
+  const after = fs.statSync(full);
+  // Tell the agents, so the next one doesn't undo your edit. One note per file in a row.
+  const rel = String(b.path);
+  const where = b.wt ? ` on @${b.wt}'s branch` : '';
+  const last = s.messages[s.messages.length - 1];
+  if (last && last.kind === 'useredit' && last.editPath === rel && last.editWt === (b.wt || null)) {
+    updateMessage(s, last, { text: `You edited ${rel}${where} in the panel.`, at: now() }, true);
+  } else {
+    addMessage(s, { role: 'system', kind: 'useredit', editPath: rel, editWt: b.wt || null, text: `You edited ${rel}${where} in the panel.` });
+  }
+  res.json({ ok: true, size: after.size, modifiedAt: after.mtime.toISOString() });
 });
 
 app.get(['/api/sessions/:id/raw/*path', '/api/sessions/:id/wt/:wt/raw/*path'], (req, res) => {

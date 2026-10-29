@@ -1,7 +1,7 @@
 // Session panel: Progress, Files and Used tabs beside the chat.
 // Uses globals from index.html: current, agents, running, queue, api, esc, md, $, agentMap, acctText.
 
-const panel = { tab: localStorage.getItem('agentscircle:tab') || 'progress', file: null, view: 'preview', timer: null, pending: false };
+const panel = { tab: localStorage.getItem('agentscircle:tab') || 'progress', file: null, view: 'preview', timer: null, pending: false, drafts: new Map() };
 
 const fmtDur = (sec) => sec == null ? '' : sec < 60 ? `${sec}s` : sec < 3600 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${Math.floor(sec / 3600)}h ${Math.floor(sec / 60) % 60}m`;
 const fmtNum = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
@@ -27,6 +27,8 @@ function filesHtml(m) {
 document.addEventListener('click', (e) => {
   const chip = e.target.closest('.fchip[data-path]');
   if (chip) { openPanel('files'); openFile(chip.dataset.path, chip.dataset.wt || null); }
+  const oe = e.target.closest('[data-openedit]');
+  if (oe) { openPanel('files'); openFile(oe.dataset.openedit, oe.dataset.wt || null); return; }
   const turn = e.target.closest('[data-goto]');
   if (turn) { const el = $('m-' + turn.dataset.goto); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); } }
 });
@@ -78,7 +80,7 @@ function renderPanel() {
   }
   else if (panel.tab === 'files') {
     if (panel.turn) { const t = current.messages.find((x) => x.id === panel.turn); if (t && !!t.undone !== panel.turnUndone) openTurnReview(panel.turn); return; }
-    if (panel.file) return renderFile(); filesListHtml().then((h) => { if (panel.tab === 'files' && !panel.file) body.innerHTML = h; }); }
+    if (panel.file) { if (panel.view === 'edit' && $('edText')) return; return renderFile(); } filesListHtml().then((h) => { if (panel.tab === 'files' && !panel.file) body.innerHTML = h; }); }
   else if (panel.tab === 'branches') { renderBranches(); }
   else {
     const meters = current.members.filter((id) => ['claude', 'codex'].includes((agents.find((a) => a.id === id) || {}).tool));
@@ -243,8 +245,104 @@ async function openFile(p, wt) {
   if (panel.tab !== 'files') { panel.tab = 'files'; document.querySelectorAll('#panelTabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === 'files')); }
   const info = await api(`/api/sessions/${current.id}/file?path=${encodeURIComponent(p)}${panel.wt ? `&wt=${panel.wt}` : ''}`);
   panel.info = info;
-  panel.view = info.kind === 'html' || info.kind === 'image' || info.kind === 'markdown' || info.kind === 'pdf' ? 'preview' : 'source';
+  const preview = ['html', 'image', 'markdown', 'pdf'].includes(info.kind);
+  panel.view = panel.drafts.has(draftKey()) ? 'edit' : preview ? 'preview' : editable(info) ? 'edit' : 'source';
   renderFile();
+}
+
+// ---------- editing ----------
+// Unsaved edits live per file (and per agent branch) until you save or revert them, so moving
+// around the panel never loses your typing.
+const draftKey = () => `${current ? current.id : ''}|${panel.wt || ''}|${panel.file}`;
+const editable = (info) => info && info.exists && info.content != null && !info.truncated && (['text', 'markdown', 'html'].includes(info.kind) || (info.kind === 'image' && /\.svg$/i.test(info.path || '')));
+function hasDrafts() { return [...panel.drafts.values()].some((d) => d.text !== d.orig); }
+window.addEventListener('beforeunload', (e) => { if (hasDrafts()) { e.preventDefault(); e.returnValue = ''; } });
+
+function indentUnit(text) {
+  const m = text.match(/^(\t+| {2,})\S/m);
+  return m && m[1][0] === '\t' ? '\t' : m && m[1].length >= 4 && !/^ {2}\S/m.test(text) ? '    ' : '  ';
+}
+function editorHtml() {
+  return `<div class="editor"><pre class="gut" id="edGut" aria-hidden="true"></pre><textarea id="edText" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" aria-label="Edit ${esc(baseName(panel.file))}"></textarea></div>
+    <div class="edbar"><span class="edstate" id="edState" aria-live="polite"></span><span style="flex:1"></span><button id="edRevert" disabled>Revert</button><button class="primary" id="edSave" disabled>Save <kbd>${/Mac/.test(navigator.platform) ? '⌘' : 'Ctrl+'}S</kbd></button></div>`;
+}
+function mountEditor() {
+  const info = panel.info, key = draftKey();
+  const ta = $('edText'), gut = $('edGut');
+  const d = panel.drafts.get(key);
+  ta.value = d ? d.text : info.content;
+  const unit = indentUnit(ta.value);
+  let lines = 0;
+  const gutter = () => { const n = ta.value.split('\n').length; if (n !== lines) { lines = n; gut.textContent = Array.from({ length: n }, (_, i) => i + 1).join('\n'); } gut.scrollTop = ta.scrollTop; };
+  const state = () => {
+    const cur = panel.drafts.get(key);
+    const dirty = !!cur && cur.text !== cur.orig;
+    $('edSave').disabled = !dirty; $('edRevert').disabled = !dirty;
+    if (!panel.conflict && (dirty || !panel.justSaved)) $('edState').innerHTML = dirty ? '<span class="dirty"></span>Unsaved changes' : '';
+    if (dirty) panel.justSaved = false;
+    document.querySelectorAll('.ftabs [data-v="edit"]').forEach((b) => b.classList.toggle('dirty', dirty));
+  };
+  panel.justSaved = false;
+  gutter(); state();
+  ta.addEventListener('scroll', () => { gut.scrollTop = ta.scrollTop; });
+  ta.addEventListener('input', () => {
+    const cur = panel.drafts.get(key) || { orig: panel.info.content, base: panel.info.modifiedAt };
+    cur.text = ta.value;
+    if (cur.text === cur.orig) panel.drafts.delete(key); else panel.drafts.set(key, cur);
+    gutter(); state();
+  });
+  ta.addEventListener('keydown', (e) => {
+    const mod = /Mac/.test(navigator.platform) ? e.metaKey : e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveDraft(); return; }
+    if (e.key === 'Tab' && !mod && !e.altKey) {
+      e.preventDefault();
+      const { selectionStart: a, selectionEnd: b, value: v } = ta;
+      const ls = v.lastIndexOf('\n', a - 1) + 1;
+      if (!e.shiftKey && a === b) { document.execCommand('insertText', false, unit); return; }
+      const le = b > a && v[b - 1] === '\n' ? b - 1 : (v.indexOf('\n', b) < 0 ? v.length : v.indexOf('\n', b));
+      const block = v.slice(ls, le).split('\n');
+      const out = block.map((l) => e.shiftKey ? l.replace(new RegExp(`^(\\t| {1,${unit.length}})`), '') : unit + l).join('\n');
+      ta.setSelectionRange(ls, le); document.execCommand('insertText', false, out);
+      ta.setSelectionRange(ls, ls + out.length);
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !mod && !e.altKey && ta.selectionStart === ta.selectionEnd) {
+      const v = ta.value, a = ta.selectionStart;
+      const ls = v.lastIndexOf('\n', a - 1) + 1;
+      const lead = (v.slice(ls, a).match(/^[\t ]*/) || [''])[0];
+      const extra = /[{[(:]\s*$/.test(v.slice(ls, a)) ? unit : '';
+      if (lead || extra) { e.preventDefault(); document.execCommand('insertText', false, '\n' + lead + extra); }
+    }
+  });
+  $('edSave').onclick = () => saveDraft();
+  $('edRevert').onclick = async () => {
+    const ok = await askConfirm({ title: `Revert ${baseName(panel.file)}?`, body: 'Your unsaved changes to this file are thrown away.', ok: 'Revert', danger: true });
+    if (!ok) return;
+    panel.conflict = null; ta.value = panel.info.content; ta.dispatchEvent(new Event('input'));
+  };
+  if (panel.conflict) showConflict();
+  if (panel.edCaret) { ta.setSelectionRange(panel.edCaret[0], panel.edCaret[1]); ta.scrollTop = panel.edCaret[2]; panel.edCaret = null; }
+  ta.focus({ preventScroll: true });
+}
+async function saveDraft(force = false) {
+  const key = draftKey(), d = panel.drafts.get(key);
+  if (!d || d.text === d.orig) return;
+  $('edSave').disabled = true; $('edState').textContent = 'Saving…';
+  try {
+    const r = await api(`/api/sessions/${current.id}/file`, { method: 'PUT', body: { path: panel.file, wt: panel.wt, content: d.text, baseModifiedAt: d.base, force } });
+    panel.info = { ...panel.info, content: d.text, size: r.size, modifiedAt: r.modifiedAt };
+    panel.drafts.delete(key); panel.conflict = null; panel.justSaved = true;
+    $('edText').dispatchEvent(new Event('input'));
+    $('edState').innerHTML = `${ic('check', 'sm')}Saved · agents are told you edited it`;
+  } catch (e) {
+    if (/changed since you opened it/i.test(e.message)) { panel.conflict = true; showConflict(); }
+    else { $('edState').innerHTML = `<span class="err" style="margin:0">${esc(e.message)}</span>`; $('edSave').disabled = false; }
+  }
+}
+function showConflict() {
+  $('edState').innerHTML = `<span class="conflict">${ic('alert', 'sm')}Changed on disk since you opened it.</span><button class="linkbtn" id="edTheirs">Load the new version</button><button class="linkbtn" id="edMine">Save mine anyway</button>`;
+  $('edTheirs').onclick = async () => { panel.drafts.delete(draftKey()); panel.conflict = null; await refreshOpenFile(true); };
+  $('edMine').onclick = () => { panel.conflict = null; saveDraft(true); };
 }
 
 async function renderFile() {
@@ -252,37 +350,55 @@ async function renderFile() {
   const p = panel.file;
   const touches = turns().filter((m) => (m.workdir ? m.agent : null) === panel.wt && (m.files || []).some((f) => f.path === p));
   const canPreview = ['html', 'image', 'markdown', 'pdf'].includes(info.kind);
+  const canEdit = editable(info);
+  if (panel.view === 'edit' && !canEdit) panel.view = info.content != null ? 'source' : canPreview ? 'preview' : 'changes';
+  if (panel.view === 'source' && canEdit) panel.view = 'edit';
+  const dirty = panel.drafts.has(draftKey()) && panel.drafts.get(draftKey()).text !== panel.drafts.get(draftKey()).orig;
   const raw = `/api/sessions/${current.id}${panel.wt ? `/wt/${panel.wt}` : ''}/raw/${p.split('/').map(encodeURIComponent).join('/')}`;
   let view = '';
   if (!info.exists) view = '<div class="pcard"><div class="hint" style="margin:0">This file was deleted.</div></div>';
   else if (panel.view === 'preview' && info.kind === 'html') view = `<iframe class="preview" sandbox="allow-scripts allow-forms allow-popups" src="${raw}?t=${Date.now()}"></iframe>`;
   else if (panel.view === 'preview' && info.kind === 'pdf') view = `<iframe class="preview" src="${raw}"></iframe>`;
   else if (panel.view === 'preview' && info.kind === 'image') view = `<div class="imgwrap"><img src="${raw}?t=${Date.now()}" alt="${esc(baseName(p))}"></div>`;
-  else if (panel.view === 'preview' && info.kind === 'markdown') view = `<div class="mdview body">${md(info.content || '')}</div>`;
+  else if (panel.view === 'preview' && info.kind === 'markdown') view = `<div class="mdview body">${md(dirty ? panel.drafts.get(draftKey()).text : info.content || '')}</div>`;
+  else if (panel.view === 'edit') view = editorHtml();
   else if (panel.view === 'changes') {
     view = '<div class="hint">Loading…</div>';
     api(`/api/sessions/${current.id}/diff?path=${encodeURIComponent(p)}${panel.wt ? `&wt=${panel.wt}` : ''}`).then((d) => {
       if (panel.file !== p || panel.view !== 'changes') return;
       const lines = (d.diff || '').split('\n').map((l) => `<div class="dl ${l.startsWith('+') && !l.startsWith('+++') ? 'add' : l.startsWith('-') && !l.startsWith('---') ? 'del' : l.startsWith('@@') ? 'hunk' : ''}">${esc(l) || ' '}</div>`).join('');
-      $('fileView').innerHTML = `<div class="hint">${esc(d.note || '')}</div>${d.diff ? `<div class="diff">${lines}</div>` : info.content != null ? `<pre class="src">${esc(info.content)}</pre>` : ''}`;
+      $('fileView').innerHTML = `<div class="hint">${esc(d.note || '')}${dirty ? ' Your unsaved edits aren\'t included until you save.' : ''}</div>${d.diff ? `<div class="diff">${lines}</div>` : info.content != null ? `<pre class="src">${esc(info.content)}</pre>` : ''}`;
     }).catch((e) => { $('fileView').innerHTML = `<div class="err">${esc(e.message)}</div>`; });
-  } else if (info.content != null) view = `<pre class="src">${esc(info.content)}${info.truncated ? '\n… (file is larger than 512 KB, showing the start)' : ''}</pre>`;
+  } else if (info.content != null) view = `<pre class="src">${esc(info.content)}${info.truncated ? '\n… (file is larger than 512 KB, showing the start; open it in its app to edit)' : ''}</pre>`;
   else view = `<div class="pcard"><div class="hint" style="margin:0">No preview for this kind of file. Use Open to view it in its app.</div></div>`;
 
-  $('panelBody').innerHTML = `<div class="fhead"><button class="ghost ib" id="fBack" data-tip="All files">${ic('back')}</button><div class="fmain"><div class="fname">${esc(baseName(p))}</div><div class="hint" style="margin:0">${panel.wt ? `on @${esc(panel.wt)}'s branch · ` : ''}${esc(dirName(p))}${info.exists ? fmtSize(info.size) : ''}</div></div></div>
-    <div class="ftabs">${canPreview ? `<button data-v="preview" class="${panel.view === 'preview' ? 'on' : ''}">Preview</button>` : ''}<button data-v="changes" class="${panel.view === 'changes' ? 'on' : ''}">Changes</button>${info.content != null ? `<button data-v="source" class="${panel.view === 'source' ? 'on' : ''}">Source</button>` : ''}
+  const body = $('panelBody');
+  body.classList.toggle('editing', panel.view === 'edit');
+  body.innerHTML = `<div class="fhead"><button class="ghost ib" id="fBack" data-tip="All files">${ic('back')}</button><div class="fmain"><div class="fname">${esc(baseName(p))}</div><div class="hint" style="margin:0">${panel.wt ? `on @${esc(panel.wt)}'s branch · ` : ''}${esc(dirName(p))}${info.exists ? fmtSize(info.size) : ''}</div></div></div>
+    <div class="ftabs">${canPreview ? `<button data-v="preview" class="${panel.view === 'preview' ? 'on' : ''}">Preview</button>` : ''}<button data-v="changes" class="${panel.view === 'changes' ? 'on' : ''}">Changes</button>${canEdit ? `<button data-v="edit" class="${panel.view === 'edit' ? 'on' : ''}${dirty ? ' dirty' : ''}">${ic('pencil', 'sm')}Edit</button>` : info.content != null ? `<button data-v="source" class="${panel.view === 'source' ? 'on' : ''}">Source</button>` : ''}
       <span style="flex:1"></span><button data-act="reveal" title="Show in Finder / Explorer">Reveal</button><button data-act="open" title="Open in its default app">Open</button></div>
     <div id="fileView">${view}</div>
-    <div class="psec">History</div>${touches.slice().reverse().map((m) => { const f = m.files.find((x) => x.path === p); return `<div class="trow" data-goto="${m.id}"><span class="sdot ${f.status === 'deleted' ? 'error' : 'done'}"></span><div class="tmain"><b style="color:${agentColor(m.agent)}">@${esc(m.agent)}</b> <span class="hint" style="margin:0">${esc(STATUS_LABEL[f.status].toLowerCase())} · ${new Date(m.endedAt || m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span><div class="hint" style="margin:2px 0 0">${esc(requestFor(m))}</div></div></div>`; }).join('')}`;
-  $('fBack').onclick = () => { panel.file = null; renderPanel(); };
+    ${panel.view === 'edit' ? '' : `<div class="psec">History</div>${touches.slice().reverse().map((m) => { const f = m.files.find((x) => x.path === p); return `<div class="trow" data-goto="${m.id}"><span class="sdot ${f.status === 'deleted' ? 'error' : 'done'}"></span><div class="tmain"><b style="color:${agentColor(m.agent)}">@${esc(m.agent)}</b> <span class="hint" style="margin:0">${esc(STATUS_LABEL[f.status].toLowerCase())} · ${new Date(m.endedAt || m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span><div class="hint" style="margin:2px 0 0">${esc(requestFor(m))}</div></div></div>`; }).join('') || '<div class="hint">No agent has changed this file in this session.</div>'}`}`;
+  if (panel.view === 'edit') mountEditor();
+  $('fBack').onclick = () => { panel.file = null; panel.conflict = null; body.classList.remove('editing'); renderPanel(); };
   document.querySelectorAll('.ftabs [data-v]').forEach((b) => b.onclick = () => { panel.view = b.dataset.v; renderFile(); });
   document.querySelectorAll('.ftabs [data-act]').forEach((b) => b.onclick = () => api(`/api/sessions/${current.id}/reveal`, { method: 'POST', body: { path: p, open: b.dataset.act === 'open', wt: panel.wt } }));
 }
-async function refreshOpenFile() {
+// After an agent's turn: reload the open file, unless you're in the middle of editing it.
+async function refreshOpenFile(force) {
   if (panel.tab !== 'files' || !panel.file || !current) return;
-  panel.info = await api(`/api/sessions/${current.id}/file?path=${encodeURIComponent(panel.file)}${panel.wt ? `&wt=${panel.wt}` : ''}`);
+  const info = await api(`/api/sessions/${current.id}/file?path=${encodeURIComponent(panel.file)}${panel.wt ? `&wt=${panel.wt}` : ''}`);
+  const d = panel.drafts.get(draftKey());
+  if (!force && d && d.text !== d.orig) {
+    if (info.modifiedAt !== d.base && $('edState')) { panel.conflict = true; showConflict(); }
+    return;
+  }
+  const ta = $('edText');
+  if (ta && panel.view === 'edit') panel.edCaret = [ta.selectionStart, ta.selectionEnd, ta.scrollTop];
+  panel.info = info;
   renderFile();
 }
+document.addEventListener('click', (e) => { if (e.target.closest('#fBack, #panelTabs button')) { const ta = $('edText'); if (ta) panel.edCaret = null; } }, true);
 
 // ---------- Used ----------
 function usedHtml() {
@@ -400,3 +516,79 @@ async function showBranchDiff(agent) {
   } catch (e) { body.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 document.querySelectorAll('#panelTabs [data-tab=branches]').forEach((b) => b.addEventListener('click', () => { panel.branchDiff = null; }));
+
+// ---------- resizing (drag the edge, like the Claude desktop app) ----------
+const PANEL_MIN_W = 320, PANEL_MIN_H = 180, CHAT_MIN_W = 380, CHAT_MIN_H = 200;
+const psize = (() => {
+  const n = (k, d) => { try { const v = parseFloat(localStorage.getItem(k)); return Number.isFinite(v) ? v : d; } catch { return d; } };
+  return { w: n('agentscircle:panelW', 400), h: n('agentscircle:panelH', Math.round(innerHeight * 0.4)), max: (() => { try { return localStorage.getItem('agentscircle:panelMax') === '1'; } catch { return false; } })() };
+})();
+const savePsize = () => { try { localStorage.setItem('agentscircle:panelW', String(Math.round(psize.w))); localStorage.setItem('agentscircle:panelH', String(Math.round(psize.h))); localStorage.setItem('agentscircle:panelMax', psize.max ? '1' : '0'); } catch { /* private window */ } };
+const bottomLayout = () => document.body.classList.contains('panel-bottom');
+function panelLimits() {
+  const side = document.querySelector('aside');
+  const sideW = side && getComputedStyle(side).display !== 'none' ? side.getBoundingClientRect().width : 0;
+  return { maxW: Math.max(PANEL_MIN_W, innerWidth - sideW - CHAT_MIN_W), maxH: Math.max(PANEL_MIN_H, innerHeight - CHAT_MIN_H) };
+}
+function applyPanelSize() {
+  const { maxW, maxH } = panelLimits();
+  const root = document.documentElement.style;
+  if (bottomLayout()) root.setProperty('--panel-h', (psize.max ? maxH : Math.min(maxH, Math.max(PANEL_MIN_H, psize.h))) + 'px');
+  else root.setProperty('--panel-w', (psize.max ? maxW : Math.min(maxW, Math.max(PANEL_MIN_W, psize.w))) + 'px');
+  const b = $('panelExpand');
+  if (b) { b.innerHTML = ic(psize.max ? 'contract' : 'expand'); b.dataset.tip = psize.max ? 'Restore panel size' : 'Expand panel'; b.setAttribute('aria-label', b.dataset.tip); b.setAttribute('aria-pressed', psize.max ? 'true' : 'false'); }
+  const grip = $('panelGrip');
+  if (grip) {
+    grip.setAttribute('aria-orientation', bottomLayout() ? 'horizontal' : 'vertical');
+    const p = $('panel').getBoundingClientRect(), m = document.querySelector('main').getBoundingClientRect();
+    grip.classList.toggle('far', !bottomLayout() && p.left < m.left); // panel on the left of the chat: grip on its right edge
+  }
+}
+// Expanding animates once; dragging follows the pointer with no easing.
+function setPanelMax(on) {
+  psize.max = on; savePsize();
+  const pnl = $('panel');
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) { pnl.classList.add('sizing'); setTimeout(() => pnl.classList.remove('sizing'), 260); }
+  applyPanelSize();
+}
+$('panelExpand').onclick = () => setPanelMax(!psize.max);
+(() => {
+  const grip = $('panelGrip');
+  let drag = null;
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault(); grip.setPointerCapture(e.pointerId);
+    const r = $('panel').getBoundingClientRect();
+    drag = { r, far: grip.classList.contains('far') };
+    document.body.classList.add('panel-resizing', bottomLayout() ? 'rs-row' : 'rs-col');
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (bottomLayout()) psize.h = drag.r.bottom - e.clientY;
+    else psize.w = drag.far ? e.clientX - drag.r.left : drag.r.right - e.clientX;
+    psize.max = false;
+    applyPanelSize();
+  });
+  const end = () => {
+    if (!drag) return; drag = null;
+    document.body.classList.remove('panel-resizing', 'rs-row', 'rs-col');
+    // Store what you actually see (the limits may have clamped it).
+    const r = $('panel').getBoundingClientRect(); if (bottomLayout()) psize.h = r.height; else psize.w = r.width;
+    savePsize();
+  };
+  grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
+  grip.addEventListener('dblclick', () => setPanelMax(!psize.max));
+  grip.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 80 : 24, bottom = bottomLayout(), far = grip.classList.contains('far');
+    const grow = bottom ? { ArrowUp: 1, ArrowDown: -1 }[e.key] : { ArrowLeft: far ? -1 : 1, ArrowRight: far ? 1 : -1 }[e.key];
+    if (e.key === 'Enter') { e.preventDefault(); setPanelMax(!psize.max); return; }
+    if (!grow) return;
+    e.preventDefault();
+    const r = $('panel').getBoundingClientRect();
+    if (bottom) psize.h = r.height + grow * step; else psize.w = r.width + grow * step;
+    psize.max = false; applyPanelSize(); savePsize();
+  });
+})();
+window.addEventListener('resize', () => applyPanelSize());
+new MutationObserver(() => applyPanelSize()).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+applyPanelSize();
