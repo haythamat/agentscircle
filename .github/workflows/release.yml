@@ -65,7 +65,15 @@ jobs:
             export APPLE_API_KEY="$RUNNER_TEMP/apple_api_key.p8"
           fi
           [ -z "$CSC_LINK" ] && export CSC_IDENTITY_AUTO_DISCOVERY=false
-          npx electron-builder --publish always
+          # Apple sometimes takes a minute to publish the notarization ticket, and stapling then
+          # fails ("code: 68"). Try up to three times, waiting in between.
+          for attempt in 1 2 3; do
+            if npx electron-builder --publish always; then exit 0; fi
+            [ "$RUNNER_OS" = "macOS" ] || exit 1
+            echo "::warning::Mac build attempt $attempt failed; retrying in 90 seconds (usually Apple's notarization ticket isn't published yet)."
+            sleep 90
+          done
+          exit 1
 
   publish:
     needs: build
