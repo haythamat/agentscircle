@@ -67,4 +67,4 @@ Installers have the same file name in every release, so these links never change
 - Mac (Apple Silicon): https://github.com/haythamat/agentscircle/releases/latest/download/AgentsCircle-mac-arm64.dmg
 - Mac (Intel): https://github.com/haythamat/agentscircle/releases/latest/download/AgentsCircle-mac-x64.dmg
 - Windows: https://github.com/haythamat/agentscircle/releases/latest/download/AgentsCircle-Setup-Windows.exe
-- Linux: https://github.com/haythamat/agentscircle/releases/latest/download/AgentsCircle-linux-x86_64.AppImage
+- Linux: https://github.com/haythamat/agentscircle/releases/latest/download/AgentsCircle-Linux.AppImage
