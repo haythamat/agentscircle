@@ -50,12 +50,26 @@ const skills = require('./skills')({ dataDir: DATA_DIR, accounts });
 const worktrees = require('./worktrees')({ dataDir: DATA_DIR });
 const conversations = require('./conversations')({ accounts });
 const usage = require('./usage')({ accounts });
+const health = require('./health')({ accounts });
 const github = require('./github')({ settings: appSettings });
 const siteIcons = require('./site-icons')({ dataDir: DATA_DIR });
 const agentById = (id) => accounts.get(id);
 const agentsPayload = () => accounts.list().map(accounts.publicAgent);
 const broadcastAgents = () => { broadcastAll({ type: 'agents', agents: agentsPayload() }); broadcastConnectors(); };
-accounts.refreshAll().then(broadcastAgents);
+accounts.refreshAll().then(broadcastAgents).then(() => setTimeout(checkAccountsInBackground, 4000));
+// On start, check accounts that were never checked, last failed, or weren't checked for a day,
+// one at a time, so a signed-out account shows up in Settings and on its chip before you need it.
+async function checkAccountsInBackground() {
+  if (process.env.AGENTSCIRCLE_NO_STARTUP_CHECK) return;
+  const day = 24 * 3600 * 1000;
+  for (const a of accounts.list()) {
+    const t = accounts.tool(a);
+    if (!t.installed || !['claude', 'codex'].includes(t.id) || a.apiKeyLocked) continue;
+    const h = a.health;
+    if (h && h.state === 'ok' && Date.now() - new Date(h.checkedAt).getTime() < day) continue;
+    try { accounts.setHealth(a, await health.verify(a)); broadcastAgents(); } catch { /* next one */ }
+  }
+}
 
 // Check for signed agent-settings fixes now and every 6 hours.
 async function checkToolFixes() {
@@ -596,6 +610,9 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
     const permArgs = (tool.permissionArgs && tool.permissionArgs[level]) || [];
     if (permArgs.length) { const at = tool.permissionInsertAfter || 0; args = [...args.slice(0, at), ...permArgs, ...args.slice(at)]; }
     if (tool.budgetArg && agent.maxBudgetUsd) args.push(tool.budgetArg, String(agent.maxBudgetUsd));
+    // The model this account uses (chosen in Settings, or picked because the plan refused the default).
+    if (agent.model && tool.id === 'codex') args = [...args.slice(0, 1), '-m', agent.model, ...args.slice(1)];
+    else if (agent.model && tool.id === 'claude') args.push('--model', agent.model);
     const images = (triggerMsg.attachments || []).filter((x) => x.kind === 'image').map((x) => path.join(s.folder, x.path));
     if (tool.imageArg && images.length) { const at = tool.imageInsertAfter || 0; args = [...args.slice(0, at), ...images.flatMap((f) => [tool.imageArg, f]), ...args.slice(at)]; }
     const canAsk = tool.approvals === 'prompt-tool';
@@ -694,9 +711,10 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
         final = `AgentsCircle can't find ${tool.name} on this computer (the \`${tool.command}\` command). If you just updated, reinstalled or signed in to it, click Retry. If it keeps happening, open Terminal and run \`which ${tool.command}\` to see where it is, or reinstall it from Settings → Agents and accounts.`;
         accounts.reloadTools(); broadcastAgents();
       }
-      const signin = !missing && !stopped && !timedOut && !limited && code !== 0 && SIGNIN_RE.test(`${final}\n${stderr.slice(-2000)}`);
+      const modelRefused = !missing && !stopped && !timedOut && !limited && code !== 0 && health.MODEL_RE.test(`${final}\n${stderr.slice(-2000)}`);
+      const signin = !modelRefused && !missing && !stopped && !timedOut && !limited && code !== 0 && SIGNIN_RE.test(`${final}\n${stderr.slice(-2000)}`);
       if (signin) final = `${final || 'Sign-in failed.'}\n\n_@${agent.id}'s sign-in to ${tool.name} has expired. Sign in again, then retry._`;
-      const status = timedOut ? 'timeout' : stopped ? 'stopped' : limited ? 'limited' : signin ? 'signin' : code !== 0 ? 'error' : 'done';
+      const status = timedOut ? 'timeout' : stopped ? 'stopped' : limited ? 'limited' : signin ? 'signin' : modelRefused ? 'model' : code !== 0 ? 'error' : 'done';
       // The one-line status the agent was asked to end with: shown on its own, taken out of the text.
       let statusLine = null;
       {
@@ -709,7 +727,7 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
       let files = diff.files;
       if (ckBefore && ckAfter) { const exact = checkpoints.changedFiles(workdir, ckBefore, ckAfter); if (exact) files = exact; }
       updateMessage(s, reply, {
-        text: final || '(no reply)', statusLine, pending: false, error: ['error', 'limited', 'timeout', 'signin'].includes(status), limited, status, waiting: false,
+        text: final || '(no reply)', statusLine, pending: false, error: ['error', 'limited', 'timeout', 'signin', 'model'].includes(status), limited, status, waiting: false,
         seconds: Math.round((Date.now() - startedAt) / 1000), endedAt: now(),
         changes: files.length ? `${files.length} file${files.length > 1 ? 's' : ''}: ${files.slice(0, 8).map((f) => f.path).join(', ')}` : null,
         files, commits: diff.commits || [], log: (stderr.trim() ? stderr : code !== 0 ? outTail : '').slice(-4000),
@@ -762,6 +780,19 @@ async function startJob(s, job) {
   const reply = await runAgent(s, agent, job.trigger, job.hop || 0);
   if (reply && reply.status === 'done' && s.handoffs !== false) queueHandoffs(s, agent, reply, job.hop || 0);
   if (reply && reply.status === 'done') checkCanary(s, agent);
+  // The plan refused the model: find one it accepts, then run the same message again.
+  if (reply && reply.status === 'model') {
+    const h = await health.verify(agent).catch(() => null);
+    if (h) accounts.setHealth(agent, h);
+    broadcastAgents();
+    if (h && h.state === 'ok') {
+      updateMessage(s, reply, { switchedModel: agent.model || null, retried: true }, true);
+      addMessage(s, { role: 'system', kind: 'switch', text: `@${agent.id}'s plan doesn't include ${accounts.tool(agent).name}'s default model, so it now uses **${agent.model}**. Running your message again. You can change the model in Settings → Agents and accounts.` });
+      s.queue.unshift({ agentId: agent.id, trigger: job.trigger, hop: job.hop || 0 });
+    } else if (h) {
+      addMessage(s, { role: 'system', text: `@${agent.id}: ${h.message}` });
+    }
+  }
   // Hit the limit mid-task: run the same message again on another account of the same tool.
   if (reply && reply.status === 'limited' && autoSwitchOn()) {
     const spare = spareFor(s, agent);
@@ -1012,6 +1043,19 @@ app.post('/api/agents/:id/login', (req, res) => {
   try { res.json(accounts.openLogin(agent)); } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// A real check: run the account once, the way a turn does. Codex also gets a model its plan accepts.
+const verifying = new Map();
+app.post('/api/agents/:id/verify', async (req, res) => {
+  const agent = accounts.get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'No such account.' });
+  try {
+    if (!verifying.has(agent.id)) verifying.set(agent.id, (async () => { freshTool(agent); await accounts.detectIdentity(agent).catch(() => null); const h = await health.verify(agent); accounts.setHealth(agent, h); return h; })().finally(() => verifying.delete(agent.id)));
+    const h = await verifying.get(agent.id);
+    broadcastAgents();
+    res.json({ health: h, agent: accounts.publicAgent(agent) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/agents/:id/refresh', async (req, res) => {
   const agent = agentById(req.params.id);
   if (!agent) return res.status(404).json({ error: 'No such agent.' });
@@ -1051,8 +1095,12 @@ function setupState() {
     node: !!accounts.findOnPath('node'),
     agents: tools.map((t) => {
       const mine = accounts.list().filter((a) => a.tool === t.id);
-      const signedIn = mine.some((a) => a.identity && a.identity.signedIn);
-      return { tool: t.id, name: t.name, color: t.color, installed: t.installed, agents: mine.map((a) => a.id), signedIn, install: INSTALL[t.id] || null };
+      // Ready means it really worked (a real check) where AgentsCircle can check it.
+      const checkable = ['claude', 'codex'].includes(t.id);
+      const ok = mine.find((a) => a.health && a.health.state === 'ok');
+      const bad = mine.find((a) => a.health && a.health.state !== 'ok');
+      const signedIn = checkable ? !!ok : mine.some((a) => a.identity && a.identity.signedIn);
+      return { tool: t.id, name: t.name, color: t.color, installed: t.installed, agents: mine.map((a) => a.id), signedIn, checking: checkable && t.installed && !ok && !bad && mine.length > 0, problem: !ok && bad ? bad.health.message : null, problemState: !ok && bad ? bad.health.state : null, install: INSTALL[t.id] || null };
     }),
   };
 }
@@ -1062,6 +1110,9 @@ app.post('/api/setup/rescan', async (_req, res) => {
   accounts.load();
   const added = accounts.ensureDefaults();
   await accounts.refreshAll().catch(() => {});
+  // Check the agents for real (one tiny turn each), so "ready" means ready.
+  await Promise.all(accounts.list().filter((a) => accounts.tool(a).installed && ['claude', 'codex'].includes(a.tool) && !a.apiKeyLocked)
+    .map(async (a) => { try { accounts.setHealth(a, await health.verify(a)); } catch { /* shown as not checked */ } }));
   broadcastAgents();
   res.json({ ...setupState(), added });
 });

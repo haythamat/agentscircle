@@ -55,6 +55,13 @@ Sessions are saved in `~/.agentscircle/sessions`.
 - **Resizable panel:** drag the panel's edge to make it wider (or taller when it sits below the chat). Double-click the edge or use the expand button to give it as much room as the chat allows; click again to go back. The size is remembered.
 - **Edit files in the panel:** open a file from the Files tab, a file chip or an attachment, and use **Edit**. It has line numbers, Tab and Shift+Tab indenting, and keeps your indentation on new lines. Save with ⌘S (Ctrl+S). Unsaved edits stay while you move around the panel. If an agent changed the file after you opened it, AgentsCircle asks before overwriting. Every save adds a note to the chat, so the next agent knows you changed the file.
 
+## Accounts that really work (v1.3.4)
+
+An account is only marked **working** after AgentsCircle runs it once for real (a one-word reply), not just because its files name an email. This happens when you add an account, when you click **Check**, during first-run setup, and in the background when the app starts (accounts that failed, or weren't checked for a day).
+
+- **Signed out?** The account shows **signed out** in Settings and a red dot on its chip. **Log in** opens the sign-in Terminal, and AgentsCircle keeps checking until it works.
+- **Codex model your plan can't use?** If OpenAI refuses Codex's default model for your plan (for example when the Codex app and the `codex` command are different versions), AgentsCircle picks the first model in Codex's own list that your account accepts, remembers it, and reruns the message. You can set the model yourself under Edit.
+
 ## Continue a conversation from Claude Code or Codex (v1.1)
 
 Started something in Claude Code or Codex in a terminal? In **New session**, pick the project folder and AgentsCircle lists the conversations you had there (from every Claude Code and Codex account it knows). Click one, create the session, and its messages are added to the chat, so every agent can continue from it. In an open session, **Bring in a chat** does the same. Only the text between you and the agent is brought in, not tool output. Long conversations are summarized automatically before the next turn.

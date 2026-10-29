@@ -82,9 +82,9 @@ async function openSetup(state) {
   const anyInstalled = state.agents.some((a) => a.installed);
   const agentRow = (a) => {
     const cmd = a.install ? (isWin ? a.install.ps : a.install.sh) : '';
-    const status = !a.installed ? '<span class="pill warn">not installed</span>' : a.signedIn ? '<span class="pill ok">ready</span>' : '<span class="pill">installed</span>';
+    const status = !a.installed ? '<span class="pill warn">not installed</span>' : a.signedIn ? '<span class="pill ok">ready</span>' : a.checking ? '<span class="pill">checking…</span>' : a.problemState === 'signedout' ? '<span class="pill bad">signed out</span>' : a.problem ? '<span class="pill bad">not working</span>' : '<span class="pill">installed</span>';
     return `<div class="setuprow"><i class="dot" style="background:${a.color}"></i><div class="grow"><b>${esc(a.name)}</b> ${status}
-      ${!a.installed && cmd ? `<div class="hint" style="margin:3px 0 0"><code>${esc(cmd)}</code>${(a.install.needsNode || (a.install.needsNodeOnWindows && isWin)) && !state.node ? ' · needs Node.js first (nodejs.org)' : ''}</div>` : a.installed ? `<div class="hint" style="margin:3px 0 0">${a.agents.map((x) => '@' + esc(x)).join(', ') || 'No agent yet'}${a.signedIn ? '' : ' · sign in once so AgentsCircle can use it'}</div>` : ''}</div>
+      ${!a.installed && cmd ? `<div class="hint" style="margin:3px 0 0"><code>${esc(cmd)}</code>${(a.install.needsNode || (a.install.needsNodeOnWindows && isWin)) && !state.node ? ' · needs Node.js first (nodejs.org)' : ''}</div>` : a.installed ? `<div class="hint" style="margin:3px 0 0">${a.agents.map((x) => '@' + esc(x)).join(', ') || 'No agent yet'}${a.signedIn ? ' · signed in and working' : a.problem ? ' · ' + esc(a.problem) : a.checking ? '' : ' · sign in once so AgentsCircle can use it'}</div>` : ''}</div>
       <div class="btns">${!a.installed && cmd ? `<button data-install="${a.tool}">Install</button>` : ''}${a.installed && !a.signedIn && a.agents[0] ? `<button data-login="${esc(a.agents[0])}">Sign in</button>` : ''}</div></div>`;
   };
   card.innerHTML = `
@@ -102,13 +102,33 @@ async function openSetup(state) {
     <div class="actions"><button id="setupSkip">Skip for now</button><button class="primary" id="setupGo" ${anyInstalled ? '' : 'disabled title="Install at least one agent first"'}>Start</button></div>`;
   addPickButton('setupFolder');
   $('setupModal').classList.add('open');
+  if (state.agents.some((a) => a.checking) && !openSetup.checked) {
+    openSetup.checked = true;
+    api('/api/setup/rescan', { method: 'POST' }).then(async (st) => { if (!$('setupModal').classList.contains('open')) return; const folder = $('setupFolder').value; agents = await api('/api/agents'); await openSetup(st); $('setupFolder').value = folder; }).catch(() => {});
+  }
   const note = (h) => { $('setupNotice').innerHTML = h; $('setupNotice').style.display = 'block'; };
   card.querySelectorAll('[data-install]').forEach((b) => b.onclick = async () => {
     try { const r = await api('/api/setup/install', { method: 'POST', body: { tool: b.dataset.install } }); note(`A terminal window opened with the installer. When it finishes, click <b>Check again</b>.<div class="hint" style="margin-top:6px">No window? Run this yourself: <code>${esc(r.command)}</code>${r.docs ? ` · <a href="${esc(r.docs)}" target="_blank">install guide</a>` : ''}</div>`); }
     catch (e) { note(`<span class="err">${esc(e.message)}</span>`); }
   });
   card.querySelectorAll('[data-login]').forEach((b) => b.onclick = async () => {
-    try { const r = await api(`/api/agents/${b.dataset.login}/login`, { method: 'POST' }); note(`A terminal window opened to sign in. ${esc(r.hint || '')} Then click <b>Check again</b>.`); }
+    try {
+      const id = b.dataset.login;
+      const r = await api(`/api/agents/${id}/login`, { method: 'POST' });
+      note(`A Terminal window opened to sign in. ${esc(r.hint || '')} AgentsCircle checks every few seconds and marks it ready when it works.`);
+      // Keep checking until the sign-in works, then refresh this screen.
+      let tries = 0;
+      const t = setInterval(async () => {
+        tries++;
+        let h; try { h = (await api(`/api/agents/${id}/verify`, { method: 'POST' })).health; } catch { return; }
+        if (h.state === 'ok' || tries >= 16 || !['signedout', 'missing'].includes(h.state)) {
+          clearInterval(t);
+          const folder = $('setupFolder') ? $('setupFolder').value : '';
+          await openSetup(); if ($('setupFolder')) $('setupFolder').value = folder;
+          note(h.state === 'ok' ? `<b>@${esc(id)} is signed in and working.</b>` : `<b>@${esc(id)} still isn't working:</b> ${esc(h.message)}`);
+        }
+      }, 12000);
+    }
     catch (e) { note(`<span class="err">${esc(e.message)}</span>`); }
   });
   $('setupRescan').onclick = async () => { $('setupRescan').textContent = 'Checking…'; const folder = $('setupFolder').value; const st = await api('/api/setup/rescan', { method: 'POST' }); agents = await api('/api/agents'); await openSetup(st); $('setupFolder').value = folder; };

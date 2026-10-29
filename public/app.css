@@ -850,3 +850,9 @@ header .tools { flex: none; }
 .mdtable tr:last-child td { border-bottom: none; }
 .mdtable th { background: var(--panel2); font-weight: 600; color: var(--text); white-space: nowrap; }
 .mdtable td + td, .mdtable th + th { border-left: 1px solid var(--line); }
+
+/* Accounts that failed a real check */
+.chip.broken { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.chip.broken::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--danger); margin-left: 2px; }
+#acctNotice[data-kind="ok"] { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+#acctNotice[data-kind="bad"] { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }

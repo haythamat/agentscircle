@@ -327,9 +327,10 @@ function renderChips() {
   $('chips').innerHTML = agents.map(a => {
     const on = current.members.includes(a.id);
     if (!on && !a.installed) return '';
-    const cls = (!a.installed ? 'missing' : on ? '' : 'off') + (a.limited ? ' limited' : '');
+    const broken = a.health && a.health.state !== 'ok';
+    const cls = (!a.installed ? 'missing' : on ? '' : 'off') + (a.limited ? ' limited' : '') + (broken ? ' broken' : '');
     const def = current.defaultAgent === a.id ? ' default' : '';
-    const how = !a.installed ? 'Not installed on this computer' : on ? 'In this session. Click to remove. Double-click to make it the default.' : 'Click to add to this session';
+    const how = !a.installed ? 'Not installed on this computer' : broken ? `Not working: ${a.health.message} (Settings → Agents and accounts → Check)` : on ? 'In this session. Click to remove. Double-click to make it the default.' : 'Click to add to this session';
     const acct = a.label || '';
     return `<span class="chip ${cls}${def}" data-id="${a.id}" data-tip="${esc(acctTitle(a) + ' · ' + how)}">${tile(a.id, a.color)}<span class="handle">@${a.id}</span>${acct ? `<span class="acct">${esc(acct)}</span>` : ''}${def ? ic('star', 'star') : ''}</span>`;
   }).join('') + `<span class="chip add" id="chipManage" data-tip="Add or manage accounts">${ic('plus', 'sm')}Account</span>`;
@@ -485,7 +486,7 @@ function msgHtml(m) {
   if (m.role === 'user') who = `You<span class="meta">${meta}</span>`;
   else {
     const st = m.pending ? (m.waiting ? `<span class="st waiting">${(m.questions || []).some(q => q.status === 'pending') ? 'Question' : 'Needs OK'}</span>` : '<span class="st working">Working</span>')
-      : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout', 'signin'].includes(m.status) ? `<span class="st ${m.status === 'signin' ? 'error' : m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : m.status === 'signin' ? 'Signed out' : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';
+      : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout', 'signin', 'model'].includes(m.status) ? `<span class="st ${['signin', 'model'].includes(m.status) ? 'error' : m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : m.status === 'signin' ? 'Signed out' : m.status === 'model' ? 'Model refused' : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';
     who = `${tile(m.agent, color)}<span class="handle" data-tip="${a ? esc(acctTitle(a)) : 'removed agent'}">@${m.agent}</span>${acct ? `<span class="acct">${esc(acct)}</span>` : ''}<span class="meta">${meta}</span>${m.branch ? `<span class="branchtag" data-tip="Worked on its own branch: ${esc(m.branch)}">${ic('branch', 'sm')}own branch</span>` : ''}<span class="state">${st}</span>`;
   }
   const body = m.pending && !m.text ? '<span class="working"><span>Working</span><i></i></span>' : md(m.text);
@@ -702,11 +703,49 @@ function permHint(a) {
 }
 
 // ---- agents and accounts manager ----
+// ---- real sign-in checks ----
+const checking = new Set();
+async function verifyAccount(id) {
+  checking.add(id); renderAccounts();
+  try { const r = await api(`/api/agents/${id}/verify`, { method: 'POST' }); const i = agents.findIndex(x => x.id === id); if (i >= 0) agents[i] = r.agent; return r.health; }
+  finally { checking.delete(id); renderAccounts(); }
+}
+// After a sign-in window opens: keep checking until it works (up to about 4 minutes).
+const watching = new Map();
+function watchSignIn(id) {
+  clearInterval(watching.get(id));
+  let tries = 0;
+  const t = setInterval(async () => {
+    if (checking.has(id)) return;
+    tries++;
+    let h; try { h = await verifyAccount(id); } catch { return; }
+    if (h && h.state === 'ok') { clearInterval(t); watching.delete(id); acctNote(`<b>@${esc(id)} is signed in and working.</b>${h.switchedModel ? ` It uses <b>${esc(h.switchedModel)}</b>, because your plan doesn't include the default model.` : ''}`, 'ok'); }
+    else if (tries >= 16 || (h && !['signedout', 'missing'].includes(h.state))) { clearInterval(t); watching.delete(id); if (h && h.state !== 'ok') acctNote(`<b>@${esc(id)} still isn't working:</b> ${esc(h.message)}`, 'bad'); }
+  }, 15000);
+  watching.set(id, t);
+}
+function acctNote(html, kind) { const n = $('acctNotice'); n.innerHTML = html; n.dataset.kind = kind || ''; n.style.display = 'block'; }
+// Check, and when it isn't signed in, open the sign-in window and wait for it.
+async function ensureWorking(id) {
+  const h = await verifyAccount(id);
+  if (h.state === 'ok') { acctNote(`<b>@${esc(id)} is signed in and working.</b>${h.switchedModel ? ` It uses <b>${esc(h.switchedModel)}</b>, because your plan doesn't include the default model.` : ''}`, 'ok'); return h; }
+  if (h.state === 'signedout') { showLogin(await api(`/api/agents/${id}/login`, { method: 'POST' }), id); watchSignIn(id); return h; }
+  acctNote(`<b>@${esc(id)} isn't working:</b> ${esc(h.message)}`, 'bad');
+  return h;
+}
+
 function statusPill(a) {
   if (!a.installed) return '<span class="pill bad">not installed</span>';
   if (a.limited) return `<span class="pill warn" title="Hit its usage limit${a.limitedUntil ? '; usable again around ' + new Date(a.limitedUntil).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : ''}">usage limit hit${a.limitedUntil ? ' · back ' + new Date(a.limitedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>`;
+  if (checking.has(a.id)) return '<span class="pill">checking…</span>';
+  // A real check (a tiny turn) beats what the tool's files say.
+  const h = a.health;
+  if (h && h.state === 'ok') return `<span class="pill ok" title="${esc(h.message)} · checked ${esc(new Date(h.checkedAt).toLocaleString())}">working</span>`;
+  if (h && h.state === 'signedout') return `<span class="pill bad" title="${esc(h.message)}">signed out</span>`;
+  if (h && h.state === 'missing') return `<span class="pill bad" title="${esc(h.message)}">not found</span>`;
+  if (h && (h.state === 'error' || h.state === 'model')) return `<span class="pill bad" title="${esc(h.message)}">not working</span>`;
   if (!a.identity) return '<span class="pill">checking…</span>';
-  return a.identity.signedIn ? '<span class="pill ok">signed in</span>' : '<span class="pill warn">not signed in</span>';
+  return a.identity.signedIn ? '<span class="pill" title="Its files name this account. Click Check to make sure it works.">not checked</span>' : '<span class="pill warn">not signed in</span>';
 }
 // ---- usage meters (from the files Claude Code and Codex write) ----
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n);
@@ -731,7 +770,7 @@ function renderAccounts() {
   if (!$('acctModal').classList.contains('open')) return;
   $('acctList').innerHTML = agents.map(a => `<div class="acctrow" data-id="${a.id}">
     <div><div class="h">${tile(a.id, a.color)}<span class="handle">@${a.id}</span><span class="hint" style="margin:0;font-weight:400">${esc(a.toolName)}${a.label ? ' · ' + esc(a.label) : ''}</span>${statusPill(a)}</div>
-      <div class="sub">${a.identity && a.identity.label ? 'Account: ' + esc(a.identity.label) + (a.identity.detail ? ' · ' + esc(a.identity.detail) : '') : 'Account: unknown'}${a.separateLogin ? ' · own login folder: <code>' + esc(a.configDir) + '</code>' : ' · uses your normal login'}${a.apiKeyLocked ? ' · <span style="color:var(--warn)">API key is in the keychain; open the AgentsCircle app to use it</span>' : a.hasApiKey ? ` · API key set${a.apiKeyStore === 'keychain' ? ' (in your keychain)' : ''}` : ''}</div></div>
+      <div class="sub">${a.identity && a.identity.label ? 'Account: ' + esc(a.identity.label) + (a.identity.detail ? ' · ' + esc(a.identity.detail) : '') : 'Account: unknown'}${a.separateLogin ? ' · own login folder: <code>' + esc(a.configDir) + '</code>' : ' · uses your normal login'}${a.model ? ' · model: <code>' + esc(a.model) + '</code>' : ''}${a.health && a.health.state !== 'ok' ? `<div style="color:var(--danger);margin-top:3px">${esc(a.health.message)}</div>` : ''}${a.apiKeyLocked ? ' · <span style="color:var(--warn)">API key is in the keychain; open the AgentsCircle app to use it</span>' : a.hasApiKey ? ` · API key set${a.apiKeyStore === 'keychain' ? ' (in your keychain)' : ''}` : ''}</div></div>
     <div class="btns"><button data-act="login">Log in</button><button data-act="refresh">Check</button><button data-act="edit">Edit</button><button data-act="remove" class="ghost ib danger" data-tip="Remove this account">${ic('trash', 'sm')}</button></div>
     <div class="usage" data-usage="${a.id}"></div>
     <div class="permrow">${a.hasLevels ? `<span class="hint" style="margin:0">Permission</span><select class="sel perm" data-perm>${Object.entries(PERM_LABELS).map(([k, l]) => `<option value="${k}" ${a.permission === k ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="hint" style="margin:0">${esc(permHint(a))}</span>` : '<span class="hint" style="margin:0">Uses its own permission settings.</span>'}</div>
@@ -740,6 +779,7 @@ function renderAccounts() {
       <div><label>Label</label><input data-f="label" value="${esc(a.label || '')}" placeholder="Work, Personal…"></div>
       <div><label>Color</label><input data-f="color" type="color" value="${a.color}"></div>
       ${a.apiKeyEnv ? `<div><label>API key</label><input data-f="apiKey" type="password" placeholder="${a.hasApiKey ? '•••• (leave empty to keep)' : 'optional'}" autocomplete="off"></div>` : '<div></div>'}
+      ${['claude', 'codex'].includes(a.tool) ? `<div><label>Model (empty = the tool's default)</label><input data-f="model" value="${esc(a.model || '')}" placeholder="${a.tool === 'codex' ? 'gpt-6-astra' : 'sonnet'}" spellcheck="false"></div>` : ''}
       <div><label>Time limit per turn (minutes, empty = none)</label><input data-f="timeoutMin" type="number" min="1" max="600" value="${a.timeoutMin || ''}"></div>
       ${a.canBudget ? `<div><label>Spending limit per turn (USD, empty = none)</label><input data-f="maxBudgetUsd" type="number" min="0" step="0.5" value="${a.maxBudgetUsd || ''}"></div>` : '<div></div>'}
       <div class="full actions" style="margin-top:4px"><button data-act="cancel">Cancel</button><button class="primary" data-act="save">Save</button></div>
@@ -752,8 +792,8 @@ function renderAccounts() {
     row.querySelectorAll('button[data-act]').forEach(b => b.onclick = async () => {
       const act = b.dataset.act;
       try {
-        if (act === 'login') showLogin(await api(`/api/agents/${id}/login`, { method: 'POST' }), id);
-        if (act === 'refresh') { b.textContent = 'Checking…'; await api(`/api/agents/${id}/refresh`, { method: 'POST' }); }
+        if (act === 'login') { showLogin(await api(`/api/agents/${id}/login`, { method: 'POST' }), id); watchSignIn(id); }
+        if (act === 'refresh') { b.textContent = 'Checking…'; await ensureWorking(id); }
         if (act === 'edit') row.querySelector('.edit').classList.add('open');
         if (act === 'cancel') row.querySelector('.edit').classList.remove('open');
         if (act === 'remove' && confirm(`Remove @${id}? Its login folder stays on your computer, so you can add it back later without signing in again.`)) await api(`/api/agents/${id}`, { method: 'DELETE' });
@@ -768,7 +808,8 @@ function renderAccounts() {
 }
 function showLogin(r, id) {
   const n = $('acctNotice');
-  n.innerHTML = `<b>A terminal window opened to sign in @${esc(id)}.</b> ${esc(r.hint || '')}<br>When you're done, click <b>Check</b> on its row.<div class="hint" style="margin-top:6px">No window? Run this in Terminal yourself: <code>${esc(r.command)}</code></div>`;
+  n.innerHTML = `<b>A Terminal window opened to sign in @${esc(id)}.</b> ${esc(r.hint || '')}<br>AgentsCircle checks every few seconds and tells you here when it works.<div class="hint" style="margin-top:6px">No window? Run this in Terminal yourself: <code>${esc(r.command)}</code></div>`;
+  n.dataset.kind = '';
   n.style.display = 'block';
 }
 function suggestHandle(toolId) {
@@ -815,8 +856,11 @@ $('aAdd').onclick = async () => {
     const t = tools.find(x => x.id === $('aTool').value);
     const a = await api('/api/agents', { method: 'POST', body: { tool: t.id, id: $('aHandle').value, label: $('aLabel').value, color: $('aColor').value, separateLogin: t.canSeparate && $('aSep').checked, apiKey: $('aKey').value || undefined } });
     delete $('aHandle').dataset.touched; $('aLabel').value = ''; $('aKey').value = ''; syncAddForm();
-    if (a.separateLogin && !(a.identity && a.identity.signedIn)) showLogin(await api(`/api/agents/${a.id}/login`, { method: 'POST' }), a.id);
-    else { $('acctNotice').innerHTML = `Added <b>@${esc(a.id)}</b>.`; $('acctNotice').style.display = 'block'; }
+    agents = await api('/api/agents');
+    acctNote(`Added <b>@${esc(a.id)}</b>. Checking that it's signed in…`);
+    // A new account isn't done until it works: check it, and open the sign-in window if needed.
+    if (a.hasApiKey || !a.canCheck) { if (a.separateLogin && !(a.identity && a.identity.signedIn)) { showLogin(await api(`/api/agents/${a.id}/login`, { method: 'POST' }), a.id); watchSignIn(a.id); } }
+    else ensureWorking(a.id).catch((e) => acctNote(esc(e.message), 'bad'));
     if (current && !current.members.includes(a.id)) await api('/api/sessions/' + current.id, { method: 'PATCH', body: { members: [...current.members, a.id] } });
   } catch (e) { $('aErr').textContent = e.message; }
 };

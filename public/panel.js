@@ -145,7 +145,7 @@ function stripHtml(m, opts = {}) {
   const tools = (m.tools || []).filter((t) => t.name !== 'TodoWrite').length;
   const right = live
     ? `<span class="elapsed" data-start="${esc(m.startedAt || m.at)}"></span>${m.waiting ? `<span class="st waiting">${(m.questions || []).some((q) => q.status === 'pending') ? 'Question' : 'Approve'}</span>` : '<span class="st working">Working</span>'}`
-    : `<span>${fmtDur(m.seconds)}</span><span>${[nf ? `${nf} file${nf > 1 ? 's' : ''}` : '', m.usage && m.usage.costUsd != null ? '$' + m.usage.costUsd.toFixed(2) : ''].filter(Boolean).join(' · ') || (st === 'done' ? '' : `<span class="st ${st === 'signin' ? 'error' : st}">${{ signin: 'Signed out', limited: 'Limit hit', timeout: 'Timed out', error: 'Error', stopped: 'Stopped', undone: 'Undone' }[st] || st}</span>`)}</span>`;
+    : `<span>${fmtDur(m.seconds)}</span><span>${[nf ? `${nf} file${nf > 1 ? 's' : ''}` : '', m.usage && m.usage.costUsd != null ? '$' + m.usage.costUsd.toFixed(2) : ''].filter(Boolean).join(' · ') || (st === 'done' ? '' : `<span class="st ${['signin', 'model'].includes(st) ? 'error' : st}">${{ signin: 'Signed out', model: 'Model refused', limited: 'Limit hit', timeout: 'Timed out', error: 'Error', stopped: 'Stopped', undone: 'Undone' }[st] || st}</span>`)}</span>`;
   const last = (m.activity || []).at(-1);
   return `<div class="strip${m.waiting ? ' needs' : ''}" data-key="${m.id}" data-goto="${m.id}" title="Jump to this reply">
     ${tile(m.agent, agentColor(m.agent))}
