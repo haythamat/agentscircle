@@ -55,6 +55,17 @@ Sessions are saved in `~/.agentscircle/sessions`.
 - **Resizable panel:** drag the panel's edge to make it wider (or taller when it sits below the chat). Double-click the edge or use the expand button to give it as much room as the chat allows; click again to go back. The size is remembered.
 - **Edit files in the panel:** open a file from the Files tab, a file chip or an attachment, and use **Edit**. It has line numbers, Tab and Shift+Tab indenting, and keeps your indentation on new lines. Save with ⌘S (Ctrl+S). Unsaved edits stay while you move around the panel. If an agent changed the file after you opened it, AgentsCircle asks before overwriting. Every save adds a note to the chat, so the next agent knows you changed the file.
 
+## Model and effort per agent, per session (v1.3.4)
+
+Click an agent's chip at the top of a session to choose its **model** and **effort** for that session. Change them any time; the next turn uses them, and every session keeps its own choice. The chip shows what's set (for example `@codex gpt-6-astra · high`), and every reply shows the model and effort it used.
+
+- **Claude Code:** Fable, Opus, Sonnet or Haiku (or any model name), effort low to max.
+- **Codex:** the models in your Codex's own list, each with the effort levels it supports.
+- **Cursor and OpenCode:** the models their `models` command lists.
+- **Usual** means the account's default (Settings → Agents and accounts → Edit), or the tool's own default.
+
+The same menu makes an agent the session's default or removes it from the session.
+
 ## Accounts that really work (v1.3.4)
 
 An account is only marked **working** after AgentsCircle runs it once for real (a one-word reply), not just because its files name an email. This happens when you add an account, when you click **Check**, during first-run setup, and in the background when the app starts (accounts that failed, or weren't checked for a day).

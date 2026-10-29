@@ -51,6 +51,7 @@ const worktrees = require('./worktrees')({ dataDir: DATA_DIR });
 const conversations = require('./conversations')({ accounts });
 const usage = require('./usage')({ accounts });
 const health = require('./health')({ accounts });
+const models = require('./models')({ accounts });
 const github = require('./github')({ settings: appSettings });
 const siteIcons = require('./site-icons')({ dataDir: DATA_DIR });
 const agentById = (id) => accounts.get(id);
@@ -104,7 +105,7 @@ function saveSession(s) {
   fs.writeFileSync(sessionFile(s.id), JSON.stringify(persist, null, 2));
 }
 
-const summary = (s) => ({ id: s.id, name: s.name, folder: s.folder, members: s.members, updatedAt: s.updatedAt, busy: busy(s), waiting: s.messages.some((m) => m.pending && m.waiting), running: runningIds(s), handoffs: s.handoffs !== false, summarized: s.summary ? s.summary.count : 0, context: contextInfo(s), mode: s.mode === 'parallel' ? 'parallel' : 'shared' });
+const summary = (s) => ({ id: s.id, name: s.name, folder: s.folder, members: s.members, updatedAt: s.updatedAt, busy: busy(s), waiting: s.messages.some((m) => m.pending && m.waiting), running: runningIds(s), handoffs: s.handoffs !== false, summarized: s.summary ? s.summary.count : 0, context: contextInfo(s), agentModels: s.agentModels || {}, mode: s.mode === 'parallel' ? 'parallel' : 'shared' });
 
 // ---------- websocket broadcast ----------
 const subscribers = new Map(); // sessionId -> Set<ws>
@@ -565,6 +566,12 @@ const busy = (s) => s.runs && s.runs.size > 0;
 const runningIds = (s) => [...(s.runs ? s.runs.keys() : [])];
 function broadcastStatus(s) { broadcast(s.id, { type: 'status', busy: busy(s), running: runningIds(s) }); }
 
+// The model and effort an agent uses in a session: the session's choice wins, then the account's default.
+function modelFor(s, agent) {
+  const own = (s && s.agentModels && s.agentModels[agent.id]) || {};
+  return { model: own.model || agent.model || null, effort: own.effort || agent.effort || null, fromSession: !!(own.model || own.effort) };
+}
+
 // A tool's program can move while the app is open (Claude Code updates itself, or you reinstall
 // it). Before each run, check it's still there; if not, look for it again.
 function freshTool(agent) {
@@ -610,9 +617,12 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
     const permArgs = (tool.permissionArgs && tool.permissionArgs[level]) || [];
     if (permArgs.length) { const at = tool.permissionInsertAfter || 0; args = [...args.slice(0, at), ...permArgs, ...args.slice(at)]; }
     if (tool.budgetArg && agent.maxBudgetUsd) args.push(tool.budgetArg, String(agent.maxBudgetUsd));
-    // The model this account uses (chosen in Settings, or picked because the plan refused the default).
-    if (agent.model && tool.id === 'codex') args = [...args.slice(0, 1), '-m', agent.model, ...args.slice(1)];
-    else if (agent.model && tool.id === 'claude') args.push('--model', agent.model);
+    // Model and effort: this session's choice for the agent, else the account's, else the tool's default.
+    const pick = modelFor(s, agent);
+    for (const ins of models.args(tool, pick.model, pick.effort)) {
+      const at = ins.at == null ? args.length : Math.min(ins.at, args.length);
+      args = [...args.slice(0, at), ...ins.args, ...args.slice(at)];
+    }
     const images = (triggerMsg.attachments || []).filter((x) => x.kind === 'image').map((x) => path.join(s.folder, x.path));
     if (tool.imageArg && images.length) { const at = tool.imageInsertAfter || 0; args = [...args.slice(0, at), ...images.flatMap((f) => [tool.imageArg, f]), ...args.slice(at)]; }
     const canAsk = tool.approvals === 'prompt-tool';
@@ -627,7 +637,7 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
     const reply = addMessage(s, {
       role: 'agent', agent: agent.id, account, tool: tool.id, replyTo: triggerMsg.id, text: '', activity: [],
       tools: [], todos: null, usage: null, model: null, promptChars: (promptFile ? fs.statSync(promptFile).size : prompt.length), startedAt: now(), pending: true,
-      sharedConnectors: inj.names, permission: level, approvals: [], questions: [],
+      sharedConnectors: inj.names, permission: level, approvals: [], questions: [], chosenModel: pick.model, effort: pick.effort,
       ...(wt ? { workdir, branch: wt.branch } : {}),
     });
     runs.set(runKey, { s, agent, reply, level, token: runToken, hop, mentioned: [] });
@@ -782,6 +792,13 @@ async function startJob(s, job) {
   if (reply && reply.status === 'done') checkCanary(s, agent);
   // The plan refused the model: find one it accepts, then run the same message again.
   if (reply && reply.status === 'model') {
+    const own = s.agentModels && s.agentModels[agent.id];
+    if (own && own.model) {
+      const refused = own.model;
+      delete own.model; saveSession(s);
+      broadcast(s.id, { type: 'session', session: { ...summary(s), defaultAgent: s.defaultAgent } });
+      addMessage(s, { role: 'system', kind: 'switch', text: `Your plan doesn't include **${refused}** for @${agent.id}, so this session goes back to its usual model.` });
+    }
     const h = await health.verify(agent).catch(() => null);
     if (h) accounts.setHealth(agent, h);
     broadcastAgents();
@@ -1492,6 +1509,38 @@ app.get('/api/sessions/:id/turns/:mid/undo', (req, res) => {
     .map((x) => ({ id: x.id, agent: x.agent, files: x.files.filter((f) => files.includes(f.path)).map((f) => f.path) }));
   res.json({ files, later, commits: m.commits || [] });
 });
+// ---------- model and effort per agent, per session ----------
+app.get('/api/sessions/:id/agents/:agent/model', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const agent = agentById(req.params.agent);
+  if (!agent) return res.status(404).json({ error: 'No such agent.' });
+  const own = (s.agentModels && s.agentModels[agent.id]) || {};
+  res.json({ options: models.options(agent), session: { model: own.model || null, effort: own.effort || null }, account: { model: agent.model || null, effort: agent.effort || null }, tool: accounts.tool(agent).name, busy: s.runs && s.runs.has(agent.id) });
+});
+app.put('/api/sessions/:id/agents/:agent/model', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const agent = agentById(req.params.agent);
+  if (!agent) return res.status(404).json({ error: 'No such agent.' });
+  const clean = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 100) : null);
+  const model = clean((req.body || {}).model), effort = clean((req.body || {}).effort);
+  if (model && !/^[\w.:/@\[\]-]+$/.test(model)) return res.status(400).json({ error: 'That doesn\'t look like a model name.' });
+  if (effort && !/^[a-z]+$/.test(effort)) return res.status(400).json({ error: 'Unknown effort level.' });
+  s.agentModels ||= {};
+  const before = s.agentModels[agent.id] || {};
+  if (model || effort) s.agentModels[agent.id] = { model, effort }; else delete s.agentModels[agent.id];
+  if (before.model !== model || before.effort !== effort) {
+    const what = model || effort ? [model || 'its usual model', effort ? `${effort} effort` : null].filter(Boolean).join(' · ') : 'its usual model and effort';
+    const text = `@${agent.id} now uses ${what} in this session${s.runs && s.runs.has(agent.id) ? ', from its next turn' : ''}.`;
+    // Several quick changes make one note, not one per click.
+    const last = s.messages[s.messages.length - 1];
+    if (last && last.kind === 'modelset' && last.modelAgent === agent.id) updateMessage(s, last, { text, at: now() }, true);
+    else addMessage(s, { role: 'system', kind: 'modelset', modelAgent: agent.id, text });
+  }
+  saveSession(s);
+  broadcast(s.id, { type: 'session', session: { ...summary(s), defaultAgent: s.defaultAgent } });
+  res.json({ session: s.agentModels[agent.id] || { model: null, effort: null } });
+});
+
 // Run the same message again for the same agent (after signing in again, for example).
 app.post('/api/sessions/:id/turns/:mid/retry', (req, res) => {
   const s = getSession(req, res); if (!s) return;

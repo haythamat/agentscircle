@@ -856,3 +856,33 @@ header .tools { flex: none; }
 .chip.broken::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--danger); margin-left: 2px; }
 #acctNotice[data-kind="ok"] { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
 #acctNotice[data-kind="bad"] { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+
+/* Model and effort per agent, per session */
+.chip .cmodel { font: 11.5px var(--mono); color: var(--muted); padding-left: 6px; border-left: 1px solid var(--line); white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.chip .caret { color: var(--faint); margin-left: -2px; }
+.chip.menu-on { border-color: var(--focus-line); background: var(--sel); }
+.amenu { width: 340px; overflow: auto; padding: 6px; }
+.amenu .amhead { display: flex; align-items: center; gap: 8px; padding: 6px 8px 8px; }
+.amenu .amsec { padding: 8px 8px 4px; font: 600 11px/1 var(--font-cond); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); display: flex; gap: 6px; align-items: baseline; }
+.amenu .amsec .hint { text-transform: none; letter-spacing: 0; font-family: var(--font-ui, inherit); font-size: 11.5px; }
+.amenu .mlist { max-height: 250px; overflow: auto; display: flex; flex-direction: column; gap: 1px; }
+.amenu .mrow { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 6px; text-align: left; border: none; background: transparent; padding: 6px 8px; border-radius: 6px; min-height: 0; height: auto; width: 100%; justify-content: stretch; }
+.amenu .mrow:hover, .amenu .mrow:focus-visible { background: var(--sel); outline: none; }
+.amenu .mrow .mcheck { color: var(--accent); padding-top: 1px; }
+.amenu .mrow .mtext { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.amenu .mrow b { font-weight: 550; font-size: 13px; color: var(--text); }
+.amenu .mrow .mtext span { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.amenu .mrow.on b { color: var(--accent); }
+.amenu .mcustom { display: flex; gap: 6px; padding: 6px 8px 2px; }
+.amenu .mcustom input { flex: 1; min-height: 28px; font: 12px var(--mono); padding: 4px 8px; }
+.amenu .mcustom button { min-height: 28px; font-size: 12px; }
+.amenu .aeff { margin: 0 8px; display: flex; flex-wrap: wrap; }
+.amenu .amnote { margin: 8px 8px 4px; font-size: 11.5px; }
+.amenu .mact { display: flex; width: 100%; align-items: center; gap: 9px; border: none; background: transparent; min-height: 30px; padding: 0 10px; font-size: 13px; color: var(--text); border-radius: 6px; justify-content: flex-start; }
+.amenu .mact:hover { background: var(--sel); }
+.amenu .mact.danger, .amenu .mact.danger .ic { color: var(--danger); }
+
+.amenu .aeff button, .amenu .mcustom button { width: auto; display: inline-flex; justify-content: center; }
+.amenu .aeff button { flex: 1 1 auto; min-height: 26px; padding: 0 9px; color: var(--muted); }
+.amenu .aeff button.on { color: var(--text); }
+.amenu .mcustom input { width: auto; min-width: 0; }

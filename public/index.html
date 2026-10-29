@@ -330,14 +330,17 @@ function renderChips() {
     const broken = a.health && a.health.state !== 'ok';
     const cls = (!a.installed ? 'missing' : on ? '' : 'off') + (a.limited ? ' limited' : '') + (broken ? ' broken' : '');
     const def = current.defaultAgent === a.id ? ' default' : '';
-    const how = !a.installed ? 'Not installed on this computer' : broken ? `Not working: ${a.health.message} (Settings → Agents and accounts → Check)` : on ? 'In this session. Click to remove. Double-click to make it the default.' : 'Click to add to this session';
+    const how = !a.installed ? 'Not installed on this computer' : broken ? `Not working: ${a.health.message} (Settings → Agents and accounts → Check)` : on ? 'In this session. Click for its model and effort, to make it the default, or to remove it.' : 'Click to add to this session';
+    const mtext = on && typeof modelChipText === 'function' ? modelChipText(a.id) : '';
     const acct = a.label || '';
-    return `<span class="chip ${cls}${def}" data-id="${a.id}" data-tip="${esc(acctTitle(a) + ' · ' + how)}">${tile(a.id, a.color)}<span class="handle">@${a.id}</span>${acct ? `<span class="acct">${esc(acct)}</span>` : ''}${def ? ic('star', 'star') : ''}</span>`;
+    return `<span class="chip ${cls}${def}" data-id="${a.id}" data-tip="${esc(acctTitle(a) + ' · ' + how)}">${tile(a.id, a.color)}<span class="handle">@${a.id}</span>${acct ? `<span class="acct">${esc(acct)}</span>` : ''}${mtext ? `<span class="cmodel">${esc(mtext)}</span>` : ''}${def ? ic('star', 'star') : ''}${on ? ic('chevronDown', 'sm caret') : ''}</span>`;
   }).join('') + `<span class="chip add" id="chipManage" data-tip="Add or manage accounts">${ic('plus', 'sm')}Account</span>`;
   $('chipManage').onclick = () => openSettings('accounts');
   document.querySelectorAll('.chip[data-id]').forEach(el => {
     el.onclick = async () => {
       const a = agentMap()[el.dataset.id]; if (!a.installed) return;
+      // In the session: open its menu (model, effort, default, remove). Not in it: add it.
+      if (current.members.includes(a.id) && typeof openAgentMenu === 'function') { if (amFor === a.id) closeAgentMenu(); else openAgentMenu(a.id, el); return; }
       const members = current.members.includes(a.id) ? current.members.filter(m => m !== a.id) : [...current.members, a.id];
       await api('/api/sessions/' + current.id, { method: 'PATCH', body: { members } });
     };
@@ -481,7 +484,7 @@ function msgHtml(m) {
   const a = m.agent && agentMap()[m.agent];
   const color = a ? a.color : '';
   const acct = m.agent ? (m.account || acctText(a)) : '';
-  const meta = [clock(m.at), m.seconds != null ? fmtSecs(m.seconds) : '', m.imported ? 'imported' : ''].filter(Boolean).join(' · ');
+  const meta = [clock(m.at), m.seconds != null ? fmtSecs(m.seconds) : '', m.role === 'agent' ? [m.model || m.chosenModel, m.effort].filter(Boolean).join(' ') : '', m.imported ? 'imported' : ''].filter(Boolean).join(' · ');
   let who;
   if (m.role === 'user') who = `You<span class="meta">${meta}</span>`;
   else {
@@ -779,7 +782,7 @@ function renderAccounts() {
       <div><label>Label</label><input data-f="label" value="${esc(a.label || '')}" placeholder="Work, Personal…"></div>
       <div><label>Color</label><input data-f="color" type="color" value="${a.color}"></div>
       ${a.apiKeyEnv ? `<div><label>API key</label><input data-f="apiKey" type="password" placeholder="${a.hasApiKey ? '•••• (leave empty to keep)' : 'optional'}" autocomplete="off"></div>` : '<div></div>'}
-      ${['claude', 'codex'].includes(a.tool) ? `<div><label>Model (empty = the tool's default)</label><input data-f="model" value="${esc(a.model || '')}" placeholder="${a.tool === 'codex' ? 'gpt-6-astra' : 'sonnet'}" spellcheck="false"></div>` : ''}
+      ${['claude', 'codex'].includes(a.tool) ? `<div><label>Model (empty = the tool's default)</label><input data-f="model" value="${esc(a.model || '')}" placeholder="${a.tool === 'codex' ? 'gpt-6-astra' : 'sonnet'}" spellcheck="false"></div><div><label>Effort (empty = the tool's default)</label><input data-f="effort" value="${esc(a.effort || '')}" placeholder="${a.tool === 'codex' ? 'medium' : 'high'}" spellcheck="false"></div>` : ''}
       <div><label>Time limit per turn (minutes, empty = none)</label><input data-f="timeoutMin" type="number" min="1" max="600" value="${a.timeoutMin || ''}"></div>
       ${a.canBudget ? `<div><label>Spending limit per turn (USD, empty = none)</label><input data-f="maxBudgetUsd" type="number" min="0" step="0.5" value="${a.maxBudgetUsd || ''}"></div>` : '<div></div>'}
       <div class="full actions" style="margin-top:4px"><button data-act="cancel">Cancel</button><button class="primary" data-act="save">Save</button></div>
@@ -881,6 +884,7 @@ $('aAdd').onclick = async () => {
 <script src="/desktop.js"></script>
 <script src="/github.js"></script>
 <script src="/session.js"></script>
+<script src="/agentmenu.js"></script>
 <script src="/look.js"></script>
 </body>
 </html>

@@ -40,7 +40,12 @@
         ]
       },
       "approvals": "prompt-tool",
-      "budgetArg": "--max-budget-usd"
+      "budgetArg": "--max-budget-usd",
+      "modelArg": "--model",
+      "effortArg": [
+        "--effort",
+        "{EFFORT}"
+      ]
     },
     {
       "id": "codex",
@@ -81,7 +86,14 @@
       },
       "permissionInsertAfter": 1,
       "imageArg": "-i",
-      "imageInsertAfter": 1
+      "imageInsertAfter": 1,
+      "modelArg": "-m",
+      "modelInsertAfter": 1,
+      "effortArg": [
+        "-c",
+        "model_reasoning_effort=\"{EFFORT}\""
+      ],
+      "effortInsertAfter": 1
     },
     {
       "id": "cursor",
@@ -125,7 +137,9 @@
       },
       "permissionInsertAfter": 2,
       "mcp": "cursor",
-      "longPromptViaFile": true
+      "longPromptViaFile": true,
+      "modelArg": "--model",
+      "modelInsertAfter": 1
     },
     {
       "id": "opencode",
@@ -156,7 +170,9 @@
         "full": []
       },
       "permissionInsertAfter": 1,
-      "longPromptViaFile": true
+      "longPromptViaFile": true,
+      "modelArg": "-m",
+      "modelInsertAfter": 1
     },
     {
       "id": "mock",

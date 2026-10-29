@@ -46,11 +46,11 @@ module.exports = function createAccounts({ root, dataDir, remote, vault }) {
   // API keys go to the keychain when the app can reach it; the file then only says where they are.
   const keyName = (id) => `agent:${id}:apiKey`;
   function save() {
-    const data = AGENTS.map(({ id, tool, label, color, configDir, apiKey, apiKeyRef, limitedAt, limitedUntil, permission, timeoutMin, maxBudgetUsd, model, badModels, health }) => {
+    const data = AGENTS.map(({ id, tool, label, color, configDir, apiKey, apiKeyRef, limitedAt, limitedUntil, permission, timeoutMin, maxBudgetUsd, model, effort, badModels, health }) => {
       let key = apiKey, ref = apiKeyRef;
       if (apiKey && vault && vault.available() && vault.set(keyName(id), apiKey)) { key = undefined; ref = 'keychain'; const live = AGENTS.find((x) => x.id === id); if (live) live.apiKeyRef = 'keychain'; }
       else if (apiKey) ref = undefined;
-      return { id, tool, label, color, configDir, apiKey: key, apiKeyRef: ref, limitedAt, limitedUntil, permission, timeoutMin, maxBudgetUsd, model, badModels, health };
+      return { id, tool, label, color, configDir, apiKey: key, apiKeyRef: ref, limitedAt, limitedUntil, permission, timeoutMin, maxBudgetUsd, model, effort, badModels, health };
     });
     fs.writeFileSync(userFile, JSON.stringify({ agents: data }, null, 2), { mode: 0o600 });
     try { fs.chmodSync(userFile, 0o600); } catch { /* windows */ }
@@ -204,6 +204,7 @@ module.exports = function createAccounts({ root, dataDir, remote, vault }) {
     if (!agent) throw new Error('No such agent.');
     if (patch.label !== undefined) agent.label = String(patch.label).slice(0, 60);
     if (patch.model !== undefined) agent.model = patch.model ? String(patch.model).trim().slice(0, 80) : undefined;
+    if (patch.effort !== undefined) agent.effort = /^[a-z]+$/.test(String(patch.effort || '')) ? String(patch.effort) : undefined;
     if (Array.isArray(patch.badModels)) agent.badModels = patch.badModels.map(String).slice(0, 20);
     if (patch.color) agent.color = patch.color;
     if (patch.apiKey !== undefined) {
@@ -345,7 +346,7 @@ module.exports = function createAccounts({ root, dataDir, remote, vault }) {
       identity: a.identity, loginHint: tool.loginHint || '', loginCommand: loginCommandText(a),
       permission: a.permission || 'risky', canAsk: tool.approvals === 'prompt-tool', hasLevels: !!tool.permissionArgs,
       timeoutMin: a.timeoutMin, maxBudgetUsd: a.maxBudgetUsd, canBudget: !!tool.budgetArg,
-      model: a.model || null, health: a.health || null, canCheck: ['claude', 'codex'].includes(tool.id),
+      model: a.model || null, effort: a.effort || null, health: a.health || null, canCheck: ['claude', 'codex'].includes(tool.id),
     };
   }
   const publicTools = () => TOOLS.filter((t) => !t.hidden || process.env.AGENTSCIRCLE_DEV)
