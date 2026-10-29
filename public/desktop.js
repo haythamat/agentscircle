@@ -114,6 +114,8 @@ async function openSetup(state) {
   card.querySelectorAll('[data-login]').forEach((b) => b.onclick = async () => {
     try {
       const id = b.dataset.login;
+      const ag = (await api('/api/agents')).find((x) => x.id === id);
+      if (ag && ag.canSignIn) { openSignin(id, { onDone: async () => { const folder = $('setupFolder') ? $('setupFolder').value : ''; await openSetup(); if ($('setupFolder')) $('setupFolder').value = folder; } }); return; }
       const r = await api(`/api/agents/${id}/login`, { method: 'POST' });
       note(`A Terminal window opened to sign in. ${esc(r.hint || '')} AgentsCircle checks every few seconds and marks it ready when it works.`);
       // Keep checking until the sign-in works, then refresh this screen.

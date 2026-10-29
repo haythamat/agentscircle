@@ -346,7 +346,7 @@ module.exports = function createAccounts({ root, dataDir, remote, vault }) {
       identity: a.identity, loginHint: tool.loginHint || '', loginCommand: loginCommandText(a),
       permission: a.permission || 'risky', canAsk: tool.approvals === 'prompt-tool', hasLevels: !!tool.permissionArgs,
       timeoutMin: a.timeoutMin, maxBudgetUsd: a.maxBudgetUsd, canBudget: !!tool.budgetArg,
-      model: a.model || null, effort: a.effort || null, health: a.health || null, canCheck: ['claude', 'codex'].includes(tool.id),
+      model: a.model || null, effort: a.effort || null, health: a.health || null, canCheck: ['claude', 'codex'].includes(tool.id), canSignIn: !!tool.signinArgs,
     };
   }
   const publicTools = () => TOOLS.filter((t) => !t.hidden || process.env.AGENTSCIRCLE_DEV)

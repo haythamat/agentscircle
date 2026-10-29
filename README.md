@@ -70,7 +70,7 @@ The same menu makes an agent the session's default or removes it from the sessio
 
 An account is only marked **working** after AgentsCircle runs it once for real (a one-word reply), not just because its files name an email. This happens when you add an account, when you click **Check**, during first-run setup, and in the background when the app starts (accounts that failed, or weren't checked for a day).
 
-- **Signed out?** The account shows **signed out** in Settings and a red dot on its chip. **Log in** opens the sign-in Terminal, and AgentsCircle keeps checking until it works.
+- **Signed out?** The account shows **signed out** in Settings and a red dot on its chip. **Log in** opens the sign-in page (Anthropic or OpenAI) in your browser, with no Terminal: AgentsCircle runs the tool's own sign-in in the background, takes the code if the page shows one, and checks the account works (v1.3.5).
 - **Codex model your plan can't use?** If OpenAI refuses Codex's default model for your plan (for example when the Codex app and the `codex` command are different versions), AgentsCircle picks the first model in Codex's own list that your account accepts, remembers it, and reruns the message. You can set the model yourself under Edit.
 
 ## Continue a conversation from Claude Code or Codex (v1.1)

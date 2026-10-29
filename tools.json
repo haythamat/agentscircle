@@ -45,6 +45,11 @@
       "effortArg": [
         "--effort",
         "{EFFORT}"
+      ],
+      "signinArgs": [
+        "auth",
+        "login",
+        "--claudeai"
       ]
     },
     {
@@ -93,7 +98,10 @@
         "-c",
         "model_reasoning_effort=\"{EFFORT}\""
       ],
-      "effortInsertAfter": 1
+      "effortInsertAfter": 1,
+      "signinArgs": [
+        "login"
+      ]
     },
     {
       "id": "cursor",

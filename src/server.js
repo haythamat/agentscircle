@@ -52,6 +52,14 @@ const conversations = require('./conversations')({ accounts });
 const usage = require('./usage')({ accounts });
 const health = require('./health')({ accounts });
 const models = require('./models')({ accounts });
+// Open a link in your browser (the sign-in pages).
+function openUrl(url) {
+  if (!/^https:\/\//.test(url)) return;
+  try { const { shell } = require('electron'); if (shell && shell.openExternal) return void shell.openExternal(url); } catch { /* not in the desktop app */ }
+  const cmd = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+  try { spawn(cmd[0], cmd[1], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); } catch { /* the app shows the link */ }
+}
+const signin = require('./signin')({ accounts, openUrl, onUpdate: (f) => broadcastAll({ type: 'signin', flow: f }) });
 const github = require('./github')({ settings: appSettings });
 const siteIcons = require('./site-icons')({ dataDir: DATA_DIR });
 const agentById = (id) => accounts.get(id);
@@ -1072,6 +1080,29 @@ app.post('/api/agents/:id/verify', async (req, res) => {
     res.json({ health: h, agent: accounts.publicAgent(agent) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// Sign in from the app: the tool's own browser sign-in, then a real check.
+app.post('/api/agents/:id/signin', (req, res) => {
+  const agent = accounts.get(req.params.id);
+  if (!agent) return res.status(404).json({ error: 'No such account.' });
+  try {
+    freshTool(agent);
+    const flow = signin.start(agent);
+    const f = signin.flows.get(agent.id);
+    f.onSignedIn = async () => {
+      await accounts.detectIdentity(agent).catch(() => null);
+      const h = await health.verify(agent).catch((e) => ({ state: 'error', message: e.message }));
+      accounts.setHealth(agent, { ...h, checkedAt: new Date().toISOString() });
+      broadcastAgents();
+      signin.finish(agent.id, h.state === 'ok', h.state === 'ok' ? `@${agent.id} is signed in and working.${h.switchedModel ? ` It uses ${h.switchedModel}, because your plan doesn't include the default model.` : ''}` : `Signed in, but the check failed: ${h.message}`);
+    };
+    res.json(flow);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/agents/:id/signin/code', (req, res) => {
+  try { res.json(signin.sendCode(req.params.id, (req.body || {}).code)); } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/agents/:id/signin/cancel', (req, res) => { signin.cancel(req.params.id); res.json({ ok: true }); });
 
 app.post('/api/agents/:id/refresh', async (req, res) => {
   const agent = agentById(req.params.id);

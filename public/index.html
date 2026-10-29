@@ -136,6 +136,19 @@
   </div>
 </div>
 
+<div class="modal" id="signinModal">
+  <div class="card" style="width:min(500px,94vw)" role="dialog" aria-labelledby="siTitle">
+    <div style="display:flex;align-items:center;gap:10px"><span id="siTile"></span><h3 id="siTitle" style="margin:0"></h3></div>
+    <div class="sisteps" id="siSteps"></div>
+    <div id="siCodeBox" style="display:none">
+      <label for="siCode">Code from the sign-in page</label>
+      <div style="display:flex;gap:8px"><input id="siCode" placeholder="Paste the code here" autocomplete="off" spellcheck="false" style="flex:1;font-family:var(--mono)"><button class="primary" id="siSend">Continue</button></div>
+    </div>
+    <div class="err" id="siErr"></div>
+    <div class="actions"><button class="linkbtn" id="siTerminal" style="margin-right:auto">Use Terminal instead</button><button id="siClose">Cancel</button></div>
+  </div>
+</div>
+
 <div class="modal" id="askModal">
   <div class="card" style="width:min(440px,94vw)" role="alertdialog" aria-labelledby="askTitle" aria-describedby="askBody">
     <h3 id="askTitle"></h3>
@@ -400,7 +413,7 @@ function turnActionsHtml(m) {
   if ((m.role !== 'agent' && m.kind !== 'apply') || m.pending) return '';
   // A failed turn: sign in again (when that's the cause) and run the same message again.
   if (m.role === 'agent' && ['signin', 'error', 'timeout'].includes(m.status) && !m.retried && !m.switchedTo) {
-    return `<div class="turnacts">${m.status === 'signin' ? `<button class="primary" data-signin="${esc(m.agent)}">${ic('key', 'sm')}Sign in again</button>` : ''}<button data-retry="${m.id}">${ic('refresh', 'sm')}Retry</button>${m.status === 'signin' ? `<span class="hint" style="margin:0">A terminal opens to sign in @${esc(m.agent)}. Then click Retry.</span>` : ''}</div>`;
+    return `<div class="turnacts">${m.status === 'signin' ? `<button class="primary" data-signin="${esc(m.agent)}">${ic('key', 'sm')}Sign in again</button>` : ''}<button data-retry="${m.id}">${ic('refresh', 'sm')}Retry</button>${m.status === 'signin' ? `<span class="hint" style="margin:0">Opens the sign-in page in your browser. Your message runs again when it works.</span>` : ''}</div>`;
   }
   const can = m.checkpoint && (m.files || []).length;
   if (!can) return '';
@@ -420,9 +433,13 @@ document.addEventListener('click', async (e) => {
   if (si) {
     si.disabled = true;
     try {
-      const r = await api(`/api/agents/${si.dataset.signin}/login`, { method: 'POST' });
-      const hint = si.parentElement.querySelector('.hint');
-      if (hint) hint.innerHTML = `Finish signing in in the terminal window, then click Retry.${r.command ? ` No window? Run <code>${esc(r.command)}</code> in Terminal.` : ''}`;
+      const ag = agents.find(x => x.id === si.dataset.signin);
+      if (ag && ag.canSignIn) openSignin(ag.id, { retry: si.closest('.turnacts') && si.closest('.turnacts').querySelector('[data-retry]') ? si.closest('.turnacts').querySelector('[data-retry]').dataset.retry : null });
+      else {
+        const r = await api(`/api/agents/${si.dataset.signin}/login`, { method: 'POST' });
+        const hint = si.parentElement.querySelector('.hint');
+        if (hint) hint.innerHTML = `Finish signing in in the terminal window, then click Retry.${r.command ? ` No window? Run <code>${esc(r.command)}</code> in Terminal.` : ''}`;
+      }
     } catch (err) { alert(err.message); }
     si.disabled = false;
     return;
@@ -555,6 +572,7 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 1000);
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
+    if (ev.type === 'signin') { if (typeof onSigninEvent === 'function') onSigninEvent(ev.flow); return; }
     if (ev.type === 'sessions') { if (ev.deleted && current && current.id === ev.deleted) leaveSession(); loadSessions(); return; }
     if (typeof handleAttentionEvent === 'function' && handleAttentionEvent(ev)) return;
     if (ev.type === 'members' && current) { current.members = ev.members; renderChips(); renderStatus(); return; }
@@ -732,7 +750,7 @@ function acctNote(html, kind) { const n = $('acctNotice'); n.innerHTML = html; n
 async function ensureWorking(id) {
   const h = await verifyAccount(id);
   if (h.state === 'ok') { acctNote(`<b>@${esc(id)} is signed in and working.</b>${h.switchedModel ? ` It uses <b>${esc(h.switchedModel)}</b>, because your plan doesn't include the default model.` : ''}`, 'ok'); return h; }
-  if (h.state === 'signedout') { showLogin(await api(`/api/agents/${id}/login`, { method: 'POST' }), id); watchSignIn(id); return h; }
+  if (h.state === 'signedout') { const ag = agents.find(x => x.id === id); if (ag && ag.canSignIn) openSignin(id); else { showLogin(await api(`/api/agents/${id}/login`, { method: 'POST' }), id); watchSignIn(id); } return h; }
   acctNote(`<b>@${esc(id)} isn't working:</b> ${esc(h.message)}`, 'bad');
   return h;
 }
@@ -795,7 +813,7 @@ function renderAccounts() {
     row.querySelectorAll('button[data-act]').forEach(b => b.onclick = async () => {
       const act = b.dataset.act;
       try {
-        if (act === 'login') { showLogin(await api(`/api/agents/${id}/login`, { method: 'POST' }), id); watchSignIn(id); }
+        if (act === 'login') { const ag = agents.find(x => x.id === id); if (ag && ag.canSignIn) openSignin(id); else { showLogin(await api(`/api/agents/${id}/login`, { method: 'POST' }), id); watchSignIn(id); } }
         if (act === 'refresh') { b.textContent = 'Checking…'; await ensureWorking(id); }
         if (act === 'edit') row.querySelector('.edit').classList.add('open');
         if (act === 'cancel') row.querySelector('.edit').classList.remove('open');
@@ -885,6 +903,7 @@ $('aAdd').onclick = async () => {
 <script src="/github.js"></script>
 <script src="/session.js"></script>
 <script src="/agentmenu.js"></script>
+<script src="/signin.js"></script>
 <script src="/look.js"></script>
 </body>
 </html>

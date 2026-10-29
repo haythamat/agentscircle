@@ -886,3 +886,13 @@ header .tools { flex: none; }
 .amenu .aeff button { flex: 1 1 auto; min-height: 26px; padding: 0 9px; color: var(--muted); }
 .amenu .aeff button.on { color: var(--text); }
 .amenu .mcustom input { width: auto; min-width: 0; }
+
+/* In-app sign-in */
+.sisteps { display: flex; flex-direction: column; gap: 12px; margin: 18px 0 14px; }
+.sistep { display: grid; grid-template-columns: 24px 1fr; gap: 10px; align-items: start; font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+.sistep .num { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-2); display: grid; place-items: center; font: 600 11.5px/1 var(--font-cond); color: var(--muted); }
+.sistep.now { color: var(--text); }
+.sistep.now .num { border-color: var(--accent); color: var(--accent); }
+.sistep.done .num { background: var(--ok-bg); border-color: transparent; color: var(--ok); }
+.sistep a { color: var(--accent); }
+#signinModal, #askModal { z-index: 55; }
