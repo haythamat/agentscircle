@@ -46,7 +46,7 @@
   "build": {
     "appId": "dev.agentscircle.desktop",
     "productName": "AgentsCircle",
-    "copyright": "Copyright © 2026 AgentsCircle",
+    "copyright": "Copyright \u00a9 2026 AgentsCircle",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -87,7 +87,8 @@
       "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "dmg": {
-      "title": "AgentsCircle ${version}"
+      "title": "AgentsCircle ${version}",
+      "artifactName": "${productName}-mac-${arch}.${ext}"
     },
     "win": {
       "target": [
@@ -105,7 +106,8 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "AgentsCircle"
+      "shortcutName": "AgentsCircle",
+      "artifactName": "${productName}-Setup-Windows.${ext}"
     },
     "linux": {
       "target": [
@@ -119,6 +121,9 @@
         "releaseType": "draft"
       }
     ],
-    "generateUpdatesFilesForAllChannels": true
+    "generateUpdatesFilesForAllChannels": true,
+    "appImage": {
+      "artifactName": "${productName}-linux-${arch}.${ext}"
+    }
   }
 }

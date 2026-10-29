@@ -58,3 +58,13 @@ npm run app          # run the desktop app from source
 npm run dist:mac     # build on a Mac (signs if your certificate is in the keychain)
 npm run dist:win     # build on Windows
 ```
+
+## Download links that always point at the newest version
+
+Installers have the same file name in every release, so these links never change
+(they download from the release marked Latest):
+
+- Mac (Apple Silicon): https://github.com/haythamat/agentscircle/releases/latest/download/AgentsCircle-mac-arm64.dmg
+- Mac (Intel): https://github.com/haythamat/agentscircle/releases/latest/download/AgentsCircle-mac-x64.dmg
+- Windows: https://github.com/haythamat/agentscircle/releases/latest/download/AgentsCircle-Setup-Windows.exe
+- Linux: https://github.com/haythamat/agentscircle/releases/latest/download/AgentsCircle-linux-x86_64.AppImage
