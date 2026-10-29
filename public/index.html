@@ -240,11 +240,31 @@ function md(src) {
   const parts = (src || '').split(/```/);
   return parts.map((p, i) => {
     if (i % 2) { const nl = p.indexOf('\n'); return `<pre><code>${esc(nl >= 0 ? p.slice(nl + 1) : p)}</code></pre>`; }
-    const out = []; let para = []; let list = null;
+    const out = []; let para = []; let list = null; let table = null;
+    // GitHub-style tables: a header row, a | --- | row, then body rows.
+    const cells = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+    const isRule = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+    const flushTable = () => {
+      if (!table) return;
+      const al = table.align;
+      const td = (tag, c, k) => `<${tag}${al[k] ? ` style="text-align:${al[k]}"` : ''}>${inline(c)}</${tag}>`;
+      out.push(`<div class="mdtable"><table><thead><tr>${table.head.map((c, k) => td('th', c, k)).join('')}</tr></thead><tbody>${table.rows.map((r) => `<tr>${table.head.map((_, k) => td('td', r[k] || '', k)).join('')}</tr>`).join('')}</tbody></table></div>`);
+      table = null;
+    };
     const flushPara = () => { if (para.length) { out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; } };
     const flushList = () => { if (list) { out.push(`<${list.tag}>` + list.items.map((x) => `<li>${inline(x)}</li>`).join('') + `</${list.tag}>`); list = null; } };
-    for (const raw of esc(p).split('\n')) {
-      const line = raw.trimEnd();
+    const lines = esc(p).split('\n');
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li].trimEnd();
+      if (table) {
+        if (line.includes('|') && line.trim()) { table.rows.push(cells(line)); continue; }
+        flushTable();
+      }
+      if (line.includes('|') && li + 1 < lines.length && isRule(lines[li + 1])) {
+        flushPara(); flushList();
+        table = { head: cells(line), rows: [], align: cells(lines[li + 1]).map((r) => (/^:-+:$/.test(r) ? 'center' : /-:$/.test(r) ? 'right' : '')) };
+        li++; continue;
+      }
       const h = /^(#{1,4})\s+(.*)$/.exec(line);
       const ul = /^\s*[-*•]\s+(.*)$/.exec(line);
       const ol = /^\s*\d+[.)]\s+(.*)$/.exec(line);
@@ -256,7 +276,7 @@ function md(src) {
         list.items.push((ul || ol)[1]);
       } else { flushList(); para.push(line); }
     }
-    flushPara(); flushList();
+    flushPara(); flushList(); flushTable();
     return out.join('');
   }).join('');
 }

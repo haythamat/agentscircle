@@ -642,7 +642,8 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (d) => parser.feed(d));
+    let outTail = ''; // raw output, for explaining a failure when the tool printed its error outside its JSON events
+    child.stdout.on('data', (d) => { parser.feed(d); outTail = (outTail + d).slice(-8000); });
     child.stderr.on('data', (d) => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-20000); });
     child.on('error', (err) => { if (err.code === 'ENOENT') missing = true; stderr += `\n${err.message}`; });
 
@@ -662,6 +663,14 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
       const stopped = run.stopRequested;
       s.runs.delete(agent.id);
       let final = text.trim();
+      if (!final && code !== 0) {
+        // Why it failed, from the best source: error events the parser saw, plain-text lines the tool
+        // printed instead of JSON, then stderr.
+        const errs = (reply.activity || []).filter((a) => /^error:/i.test(a)).map((a) => a.replace(/^error:\s*/i, ''));
+        const plain = outTail.split('\n').map((l) => l.trim()).filter((l) => l && !/^[{[]/.test(l));
+        const why = errs.length ? errs : plain.length ? plain : stderr.trim() ? stderr.trim().split('\n') : [];
+        if (why.length) final = [...new Set(why)].slice(-12).join('\n');
+      }
       if (!final && stderr.trim()) final = stderr.trim().split('\n').slice(-15).join('\n');
       if (timedOut) final = (final ? final + '\n\n' : '') + `_(stopped after ${agent.timeoutMin} minutes, the time limit for @${agent.id})_`;
       else if (stopped) final = (final ? final + '\n\n' : '') + '_(stopped by you)_';
@@ -703,7 +712,7 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
         text: final || '(no reply)', statusLine, pending: false, error: ['error', 'limited', 'timeout', 'signin'].includes(status), limited, status, waiting: false,
         seconds: Math.round((Date.now() - startedAt) / 1000), endedAt: now(),
         changes: files.length ? `${files.length} file${files.length > 1 ? 's' : ''}: ${files.slice(0, 8).map((f) => f.path).join(', ')}` : null,
-        files, commits: diff.commits || [], log: stderr.slice(-4000),
+        files, commits: diff.commits || [], log: (stderr.trim() ? stderr : code !== 0 ? outTail : '').slice(-4000),
         checkpoint: ckBefore && ckAfter ? { before: ckBefore, after: ckAfter } : null,
       }, true);
       broadcastStatus(s);

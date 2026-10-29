@@ -842,3 +842,11 @@ header .tools { flex: none; }
 @container chat (max-width: 470px) { #exportBtn, #importBtn { display: none; } }
 .sess .n { overflow: clip; }
 #input::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Markdown tables in replies */
+.mdtable { margin: 8px 0 10px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); }
+.mdtable table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.mdtable th, .mdtable td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.mdtable tr:last-child td { border-bottom: none; }
+.mdtable th { background: var(--panel2); font-weight: 600; color: var(--text); white-space: nowrap; }
+.mdtable td + td, .mdtable th + th { border-left: 1px solid var(--line); }
