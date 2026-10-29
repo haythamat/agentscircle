@@ -374,6 +374,10 @@ document.addEventListener('keydown', (e) => {
 });
 function turnActionsHtml(m) {
   if ((m.role !== 'agent' && m.kind !== 'apply') || m.pending) return '';
+  // A failed turn: sign in again (when that's the cause) and run the same message again.
+  if (m.role === 'agent' && ['signin', 'error', 'timeout'].includes(m.status) && !m.retried && !m.switchedTo) {
+    return `<div class="turnacts">${m.status === 'signin' ? `<button class="primary" data-signin="${esc(m.agent)}">${ic('key', 'sm')}Sign in again</button>` : ''}<button data-retry="${m.id}">${ic('refresh', 'sm')}Retry</button>${m.status === 'signin' ? `<span class="hint" style="margin:0">A terminal opens to sign in @${esc(m.agent)}. Then click Retry.</span>` : ''}</div>`;
+  }
   const can = m.checkpoint && (m.files || []).length;
   if (!can) return '';
   return `<div class="turnacts">${m.undone
@@ -386,6 +390,23 @@ document.addEventListener('click', async (e) => {
     const card = d.closest('[data-ap]'); const note = card.querySelector('[data-note]').value;
     card.querySelectorAll('button').forEach(b => b.disabled = true);
     try { await api(`/api/sessions/${current.id}/approvals/${card.dataset.ap}`, { method: 'POST', body: { decision: d.dataset.decide, note } }); } catch (err) { alert(err.message); }
+    return;
+  }
+  const si = e.target.closest('[data-signin]');
+  if (si) {
+    si.disabled = true;
+    try {
+      const r = await api(`/api/agents/${si.dataset.signin}/login`, { method: 'POST' });
+      const hint = si.parentElement.querySelector('.hint');
+      if (hint) hint.innerHTML = `Finish signing in in the terminal window, then click Retry.${r.command ? ` No window? Run <code>${esc(r.command)}</code> in Terminal.` : ''}`;
+    } catch (err) { alert(err.message); }
+    si.disabled = false;
+    return;
+  }
+  const rt = e.target.closest('[data-retry]');
+  if (rt) {
+    rt.disabled = true;
+    try { await api(`/api/sessions/${current.id}/turns/${rt.dataset.retry}/retry`, { method: 'POST' }); } catch (err) { alert(err.message); rt.disabled = false; }
     return;
   }
   const u = e.target.closest('[data-undo]');
@@ -444,7 +465,7 @@ function msgHtml(m) {
   if (m.role === 'user') who = `You<span class="meta">${meta}</span>`;
   else {
     const st = m.pending ? (m.waiting ? `<span class="st waiting">${(m.questions || []).some(q => q.status === 'pending') ? 'Question' : 'Needs OK'}</span>` : '<span class="st working">Working</span>')
-      : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout'].includes(m.status) ? `<span class="st ${m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';
+      : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout', 'signin'].includes(m.status) ? `<span class="st ${m.status === 'signin' ? 'error' : m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : m.status === 'signin' ? 'Signed out' : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';
     who = `${tile(m.agent, color)}<span class="handle" data-tip="${a ? esc(acctTitle(a)) : 'removed agent'}">@${m.agent}</span>${acct ? `<span class="acct">${esc(acct)}</span>` : ''}<span class="meta">${meta}</span>${m.branch ? `<span class="branchtag" data-tip="Worked on its own branch: ${esc(m.branch)}">${ic('branch', 'sm')}own branch</span>` : ''}<span class="state">${st}</span>`;
   }
   const body = m.pending && !m.text ? '<span class="working"><span>Working</span><i></i></span>' : md(m.text);

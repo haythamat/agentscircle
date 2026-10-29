@@ -52,7 +52,7 @@ function chime(kind) {
   } catch { /* no audio */ }
 }
 
-const LABEL = { question: 'has a question', approval: 'wants your OK', done: 'finished', error: 'ran into an error', limited: 'hit its usage limit', timeout: 'ran out of time' };
+const LABEL = { question: 'has a question', approval: 'wants your OK', done: 'finished', error: 'ran into an error', limited: 'hit its usage limit', timeout: 'ran out of time', signin: 'needs you to sign in again' };
 function onNotify(ev) {
   const needs = ev.kind === 'question' || ev.kind === 'approval';
   if (needs ? !notifyPrefs.needs : !notifyPrefs.done) return;

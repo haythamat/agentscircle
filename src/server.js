@@ -165,7 +165,9 @@ function speaker(m) {
   return 'SYSTEM';
 }
 
-const HOP_LIMIT = 4;          // agent-to-agent hand-offs per message from you
+const HOP_LIMIT = 4;
+// What Claude Code, Codex, Cursor and OpenCode print when their saved sign-in no longer works.
+const SIGNIN_RE = /failed to authenticate|oauth (session|token)[^\n]*(expired|invalid|revoked)|session expired|not (logged|signed) in|please (log|sign) ?in|(run|use) [`'"]?\S*\s*(\/)?login|invalid (api key|x-api-key|bearer token)|authentication (failed|required|error)|401 unauthorized|token (has )?expired/i;          // agent-to-agent hand-offs per message from you
 const RECENT_KEEP = 25000;    // characters of recent chat kept word for word when summarizing
 
 const attachLine = (m) => (m.attachments && m.attachments.length ? `\n(attached: ${m.attachments.map((a) => a.path).join(', ')})` : '');
@@ -665,7 +667,10 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
           ? `\n\n_@${agent.id} hit its usage limit${until}. Switching to @${next.id}, which continues the same conversation._`
           : `\n\n_@${agent.id} looks like it hit its usage limit${until}.${spare.length ? ` Try ${spare.join(' or ')} instead, or turn on automatic switching in Settings.` : ' Add another account of the same tool to keep going when this happens.'}_`;
       }
-      const status = timedOut ? 'timeout' : stopped ? 'stopped' : limited ? 'limited' : code !== 0 ? 'error' : 'done';
+      // Signed out: the tool's saved sign-in expired or was revoked. Say how to fix it, with a button.
+      const signin = !stopped && !timedOut && !limited && code !== 0 && SIGNIN_RE.test(`${final}\n${stderr.slice(-2000)}`);
+      if (signin) final = `${final || 'Sign-in failed.'}\n\n_@${agent.id}'s sign-in to ${tool.name} has expired. Sign in again, then retry._`;
+      const status = timedOut ? 'timeout' : stopped ? 'stopped' : limited ? 'limited' : signin ? 'signin' : code !== 0 ? 'error' : 'done';
       // The one-line status the agent was asked to end with: shown on its own, taken out of the text.
       let statusLine = null;
       {
@@ -678,7 +683,7 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
       let files = diff.files;
       if (ckBefore && ckAfter) { const exact = checkpoints.changedFiles(workdir, ckBefore, ckAfter); if (exact) files = exact; }
       updateMessage(s, reply, {
-        text: final || '(no reply)', statusLine, pending: false, error: ['error', 'limited', 'timeout'].includes(status), limited, status, waiting: false,
+        text: final || '(no reply)', statusLine, pending: false, error: ['error', 'limited', 'timeout', 'signin'].includes(status), limited, status, waiting: false,
         seconds: Math.round((Date.now() - startedAt) / 1000), endedAt: now(),
         changes: files.length ? `${files.length} file${files.length > 1 ? 's' : ''}: ${files.slice(0, 8).map((f) => f.path).join(', ')}` : null,
         files, commits: diff.commits || [], log: stderr.slice(-4000),
@@ -1410,6 +1415,21 @@ app.get('/api/sessions/:id/turns/:mid/undo', (req, res) => {
     .map((x) => ({ id: x.id, agent: x.agent, files: x.files.filter((f) => files.includes(f.path)).map((f) => f.path) }));
   res.json({ files, later, commits: m.commits || [] });
 });
+// Run the same message again for the same agent (after signing in again, for example).
+app.post('/api/sessions/:id/turns/:mid/retry', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const m = s.messages.find((x) => x.id === req.params.mid);
+  if (!m || m.role !== 'agent' || m.pending) return res.status(400).json({ error: 'There is no finished turn to retry.' });
+  const trigger = s.messages.find((x) => x.id === m.replyTo);
+  if (!trigger) return res.status(400).json({ error: 'The message this turn answered is gone.' });
+  if (!agentById(m.agent)) return res.status(400).json({ error: `@${m.agent} isn't one of your accounts any more.` });
+  updateMessage(s, m, { retried: true }, true);
+  s.queue.push({ agentId: m.agent, trigger, hop: 0 });
+  broadcast(s.id, { type: 'queue', queue: s.queue.map((q) => q.agentId) });
+  pump(s);
+  res.json({ ok: true });
+});
+
 app.post('/api/sessions/:id/turns/:mid/undo', (req, res) => {
   const s = getSession(req, res); if (!s) return;
   if (busy(s)) return res.status(409).json({ error: 'Wait until the agents finish, or stop them first.' });
