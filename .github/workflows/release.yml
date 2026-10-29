@@ -30,8 +30,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        # Mac builds run on an Intel Mac: GitHub's Apple Silicon machines are often short, and
+        # electron-builder still makes both the arm64 and x64 apps there (no native modules).
+        os: [macos-15-intel, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
