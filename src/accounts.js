@@ -19,9 +19,13 @@ module.exports = function createAccounts({ root, dataDir, remote, vault }) {
   let TOOLS = [];
   let AGENTS = [];
 
+  // The full path of a command, so a run uses exactly the program found (and a missing one is
+  // noticed before it runs). Windows keeps the bare name; cross-spawn resolves .cmd shims there.
   const findOnPath = (cmd) => {
     const probe = spawn.sync(IS_WIN ? 'where' : 'which', [cmd], { encoding: 'utf8' });
-    return probe.status === 0 && probe.stdout.trim() ? cmd : null;
+    const hit = probe.status === 0 && (probe.stdout || '').trim().split(/\r?\n/)[0];
+    if (!hit) return null;
+    return IS_WIN || !path.isAbsolute(hit) ? cmd : hit;
   };
 
   let toolsInfo = { revision: 0, source: 'bundled' };
@@ -348,7 +352,7 @@ module.exports = function createAccounts({ root, dataDir, remote, vault }) {
 
   return {
     load, refreshAll, detectIdentity, envFor, noteOutcome, benched, resetTime, add, update, remove, openLogin, openInTerminal, openCommand, ensureDefaults,
-    tools: () => TOOLS, toolsInfo: () => toolsInfo, findOnPath,
+    tools: () => TOOLS, toolsInfo: () => toolsInfo, findOnPath, reloadTools: () => loadTools(),
     list: () => AGENTS,
     get: (id) => AGENTS.find((a) => a.id === id),
     tool: (agent) => toolById(agent.tool),

@@ -551,9 +551,21 @@ const busy = (s) => s.runs && s.runs.size > 0;
 const runningIds = (s) => [...(s.runs ? s.runs.keys() : [])];
 function broadcastStatus(s) { broadcast(s.id, { type: 'status', busy: busy(s), running: runningIds(s) }); }
 
+// A tool's program can move while the app is open (Claude Code updates itself, or you reinstall
+// it). Before each run, check it's still there; if not, look for it again.
+function freshTool(agent) {
+  const t = accounts.tool(agent);
+  const rc = t && t.resolvedCommand;
+  if (rc && (!path.isAbsolute(rc) || fs.existsSync(rc))) return t;
+  if (process.env.AGENTSCIRCLE_DESKTOP) require('./shell-path').fixPath();
+  accounts.reloadTools();
+  broadcastAgents();
+  return accounts.tool(agent);
+}
+
 function runAgent(s, agent, triggerMsg, hop = 0) {
   return new Promise((resolve) => {
-    const tool = accounts.tool(agent);
+    const tool = freshTool(agent);
     const level = agent.permission || 'risky';
     // Where this agent works: your folder, or its own worktree in parallel mode.
     let wt = null;
@@ -607,7 +619,8 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
     let stderr = '';
     let timedOut = false;
 
-    const child = spawn(tool.resolvedCommand, args, {
+    let missing = false;
+    const child = spawn(tool.resolvedCommand || tool.command, args, {
       cwd: workdir, env, windowsHide: true, detached: !IS_WIN, stdio: ['pipe', 'pipe', 'pipe'],
     });
     const run = { child, agentId: agent.id, messageId: reply.id, runKey, stopRequested: false };
@@ -631,7 +644,7 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => parser.feed(d));
     child.stderr.on('data', (d) => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-20000); });
-    child.on('error', (err) => { stderr += `\n${err.message}`; });
+    child.on('error', (err) => { if (err.code === 'ENOENT') missing = true; stderr += `\n${err.message}`; });
 
     // Always close stdin so agents never wait for more input.
     child.stdin.on('error', () => {});
@@ -668,7 +681,11 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
           : `\n\n_@${agent.id} looks like it hit its usage limit${until}.${spare.length ? ` Try ${spare.join(' or ')} instead, or turn on automatic switching in Settings.` : ' Add another account of the same tool to keep going when this happens.'}_`;
       }
       // Signed out: the tool's saved sign-in expired or was revoked. Say how to fix it, with a button.
-      const signin = !stopped && !timedOut && !limited && code !== 0 && SIGNIN_RE.test(`${final}\n${stderr.slice(-2000)}`);
+      if (missing) {
+        final = `AgentsCircle can't find ${tool.name} on this computer (the \`${tool.command}\` command). If you just updated, reinstalled or signed in to it, click Retry. If it keeps happening, open Terminal and run \`which ${tool.command}\` to see where it is, or reinstall it from Settings → Agents and accounts.`;
+        accounts.reloadTools(); broadcastAgents();
+      }
+      const signin = !missing && !stopped && !timedOut && !limited && code !== 0 && SIGNIN_RE.test(`${final}\n${stderr.slice(-2000)}`);
       if (signin) final = `${final || 'Sign-in failed.'}\n\n_@${agent.id}'s sign-in to ${tool.name} has expired. Sign in again, then retry._`;
       const status = timedOut ? 'timeout' : stopped ? 'stopped' : limited ? 'limited' : signin ? 'signin' : code !== 0 ? 'error' : 'done';
       // The one-line status the agent was asked to end with: shown on its own, taken out of the text.
@@ -812,14 +829,14 @@ function pickSummarizer(s, prefer) {
 // Run an agent read-only, outside the chat, and return its text.
 function runQuiet(agent, prompt, ms = 180000) {
   return new Promise((resolve, reject) => {
-    const tool = accounts.tool(agent);
+    const tool = freshTool(agent);
     let args = tool.args.map((a) => (a === '{PROMPT}' ? prompt : a.replace('{APP}', ROOT)));
     const ro = (tool.permissionArgs && tool.permissionArgs.readonly) || [];
     const at = tool.permissionInsertAfter || 0;
     args = [...args.slice(0, at), ...ro, ...args.slice(at)];
     if (tool.id === 'claude') args.push('--max-turns', '3');
     let text = '';
-    const child = spawn(tool.resolvedCommand, args, { cwd: os.tmpdir(), env: accounts.envFor(agent), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(tool.resolvedCommand || tool.command, args, { cwd: os.tmpdir(), env: accounts.envFor(agent), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     const parser = makeParser(tool.parser, (t) => { text += t; }, () => {}, () => {});
     const timer = setTimeout(() => { try { child.kill(); } catch { /* ok */ } }, ms);
     child.stdout.setEncoding('utf8');
