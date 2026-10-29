@@ -55,6 +55,12 @@ Sessions are saved in `~/.agentscircle/sessions`.
 - **Resizable panel:** drag the panel's edge to make it wider (or taller when it sits below the chat). Double-click the edge or use the expand button to give it as much room as the chat allows; click again to go back. The size is remembered.
 - **Edit files in the panel:** open a file from the Files tab, a file chip or an attachment, and use **Edit**. It has line numbers, Tab and Shift+Tab indenting, and keeps your indentation on new lines. Save with ⌘S (Ctrl+S). Unsaved edits stay while you move around the panel. If an agent changed the file after you opened it, AgentsCircle asks before overwriting. Every save adds a note to the chat, so the next agent knows you changed the file.
 
+## Terminal, copy buttons and commits (v1.3.6)
+
+- **Terminal in the session.** The panel's **Terminal** tab (or Ctrl + backtick, or **Open terminal** in the session menu) opens your shell in the session's folder. It keeps running when you switch tabs or sessions, and redraws when you come back. ⌘K clears it; the bar has Restart and End.
+- **Copy buttons.** Every code block in the chat has a copy button, and every message has one beside its name (it copies the message as Markdown).
+- **Commit these changes** now asks for the message in the panel itself (it did nothing before in the desktop app), and agents commit through AgentsCircle's **commit** tool.
+
 ## Model and effort per agent, per session (v1.3.4)
 
 Click an agent's chip at the top of a session to choose its **model** and **effort** for that session. Change them any time; the next turn uses them, and every session keeps its own choice. The chip shows what's set (for example `@codex gpt-6-astra · high`), and every reply shows the model and effort it used.
@@ -79,12 +85,13 @@ Started something in Claude Code or Codex in a terminal? In **New session**, pic
 
 ## Circle tools (v1.1)
 
-Every agent that can use connectors (Claude Code, Codex, Cursor, OpenCode) gets AgentsCircle's own connector with four tools:
+Every agent that can use connectors (Claude Code, Codex, Cursor, OpenCode) gets AgentsCircle's own connector with these tools:
 
 - **read_thread** reads older messages or searches the chat.
 - **list_agents** shows who is in the circle, which account each uses, whether it's busy, and its skills and connectors.
 - **mention** hands a task to another agent (respects the Hand-offs switch and the limit of 4 in a row).
 - **ask_user** shows a question card in the chat, with options, and waits for your answer.
+- **commit** commits files with git when you ask an agent to commit (v1.3.6). AgentsCircle runs the commit, so it works even when the agent's sandbox can't write to `.git` (Codex's usual case), and the chat shows what was committed.
 
 Each run gets its own key, valid only while it runs, and the connector only talks to AgentsCircle on your computer. Tools without connector support still hand off with `@codex: task` lines.
 

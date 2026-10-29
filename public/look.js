@@ -70,9 +70,9 @@ function renderAppearance() {
     + row('Text size', 'Size of the interface and messages.', seg('fontSize', [[12.5, 'Small'], [13.5, 'Default'], [14.5, 'Large'], [15.5, 'Larger']]));
   const mod = /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl+';
   $('kbdList').innerHTML = [
-    ['New session', `${mod}N`], ['Toggle sidebar', `${mod}B`], ['Toggle session panel', `${mod}J`], ['Settings', `${mod},`],
+    ['New session', `${mod}N`], ['Toggle sidebar', `${mod}B`], ['Toggle session panel', `${mod}J`], ['Terminal in this session', /Mac/.test(navigator.platform) ? '⌃`' : 'Ctrl+`'], ['Settings', `${mod},`],
     ['Focus the message box', '/'], ['Pick an agent', '@'], ['Send', '↵'], ['New line', '⇧↵'], ['Close a dialog', 'Esc'],
-  ].map(([a, k]) => `<span>${a}</span><span>${k.split(/(?<=⌘|Ctrl\+)/).map((x) => `<kbd>${x.replace('+', '')}</kbd>`).join(' ')}</span>`).join('');
+  ].map(([a, k]) => `<span>${a}</span><span>${k.split(/(?<=⌘|⌃|Ctrl\+)/).map((x) => `<kbd>${x.replace('+', '')}</kbd>`).join(' ')}</span>`).join('');
 }
 document.addEventListener('click', (e) => {
   const tp = e.target.closest('[data-theme-pick]');
@@ -109,7 +109,7 @@ function paintIcons() {
   $('sendBtn').innerHTML = ic('send');
   $('panelClose').innerHTML = ic('x');
   document.querySelectorAll('[data-ic]').forEach((el) => { el.outerHTML = ic(el.dataset.ic); });
-  const tabs = { progress: 'layout', files: 'file', used: 'sparkle', branches: 'branch' };
+  const tabs = { progress: 'layout', files: 'file', used: 'sparkle', branches: 'branch', terminal: 'terminal' };
   document.querySelectorAll('#panelTabs button').forEach((b) => { if (!b.querySelector('.ic')) b.insertAdjacentHTML('afterbegin', ic(tabs[b.dataset.tab], 'sm')); });
 }
 paintIcons();

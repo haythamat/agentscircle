@@ -74,7 +74,7 @@
 
 <section id="panel">
   <div id="panelGrip" role="separator" aria-orientation="vertical" aria-label="Resize the panel" tabindex="0" data-tip="Drag to resize · double-click to expand"></div>
-  <div class="phead"><div id="panelTabs"><button data-tab="progress">Board<span class="n"></span></button><button data-tab="files">Files<span class="n"></span></button><button data-tab="used">Usage</button><button data-tab="branches" style="display:none">Branches</button></div><button id="panelExpand" data-tip="Expand panel" aria-label="Expand panel"></button><button id="panelClose" data-tip="Close panel  ⌘J"></button></div>
+  <div class="phead"><div id="panelTabs"><button data-tab="progress">Board<span class="n"></span></button><button data-tab="files">Files<span class="n"></span></button><button data-tab="used">Usage</button><button data-tab="terminal" data-tip="Terminal  ⌃`">Terminal</button><button data-tab="branches" style="display:none">Branches</button></div><button id="panelExpand" data-tip="Expand panel" aria-label="Expand panel"></button><button id="panelClose" data-tip="Close panel  ⌘J"></button></div>
   <div id="panelBody"></div>
 </section>
 
@@ -252,7 +252,11 @@ function inline(t) {
 function md(src) {
   const parts = (src || '').split(/```/);
   return parts.map((p, i) => {
-    if (i % 2) { const nl = p.indexOf('\n'); return `<pre><code>${esc(nl >= 0 ? p.slice(nl + 1) : p)}</code></pre>`; }
+    if (i % 2) {
+      const nl = p.indexOf('\n');
+      const lang = nl > 0 ? p.slice(0, nl).trim() : '';
+      return `<div class="codeblock">${lang && /^[\w+#.-]{1,20}$/.test(lang) ? `<span class="codelang">${esc(lang)}</span>` : ''}<button class="copybtn" data-copycode data-tip="Copy" aria-label="Copy code">${ic('copy', 'sm')}</button><pre><code>${esc(nl >= 0 ? p.slice(nl + 1) : p)}</code></pre></div>`;
+    }
     const out = []; let para = []; let list = null; let table = null;
     // GitHub-style tables: a header row, a | --- | row, then body rows.
     const cells = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
@@ -421,6 +425,18 @@ function turnActionsHtml(m) {
     ? `<span class="undone">Undone</span><button data-redo="${m.id}">${ic('redo', 'sm')}Bring back</button>`
     : `<button data-review="${m.id}">${ic('eye', 'sm')}Review changes</button><button class="ghost" data-undo="${m.id}" data-tip="Put back the files this turn changed">${ic('undo', 'sm')}Undo</button>`}</div>`;
 }
+// Copy a code block, or a whole message (as the Markdown the agent wrote).
+async function copyText(t, btn) {
+  try { await navigator.clipboard.writeText(t); }
+  catch { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+  if (btn) { btn.classList.add('copied'); btn.innerHTML = ic('check', 'sm'); setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = ic('copy', 'sm'); }, 1400); }
+}
+document.addEventListener('click', (e) => {
+  const cc = e.target.closest('[data-copycode]');
+  if (cc) { const code = cc.parentElement.querySelector('code'); if (code) copyText(code.textContent.replace(/\n$/, ''), cc); return; }
+  const cm = e.target.closest('[data-copymsg]');
+  if (cm && current) { const m = current.messages.find((x) => x.id === cm.dataset.copymsg); if (m) copyText((m.text || '').trim(), cm); }
+});
 document.addEventListener('click', async (e) => {
   const d = e.target.closest('[data-decide]');
   if (d) {
@@ -509,10 +525,11 @@ function msgHtml(m) {
       : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout', 'signin', 'model'].includes(m.status) ? `<span class="st ${['signin', 'model'].includes(m.status) ? 'error' : m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : m.status === 'signin' ? 'Signed out' : m.status === 'model' ? 'Model refused' : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';
     who = `${tile(m.agent, color)}<span class="handle" data-tip="${a ? esc(acctTitle(a)) : 'removed agent'}">@${m.agent}</span>${acct ? `<span class="acct">${esc(acct)}</span>` : ''}<span class="meta">${meta}</span>${m.branch ? `<span class="branchtag" data-tip="Worked on its own branch: ${esc(m.branch)}">${ic('branch', 'sm')}own branch</span>` : ''}<span class="state">${st}</span>`;
   }
+  const copyBtn = (m.text || '').trim() && !(m.pending && !m.text) ? `<button class="copybtn msgcopy" data-copymsg="${m.id}" data-tip="Copy reply" aria-label="Copy this message">${ic('copy', 'sm')}</button>` : '';
   const body = m.pending && !m.text ? '<span class="working"><span>Working</span><i></i></span>' : md(m.text);
   const act = (m.activity || []).slice(-5).map(x => `<div>${esc(x)}</div>`).join('');
   return `<div class="msg ${m.role}${m.pending ? ' pending-msg' : ''}${m.error ? ' error' : ''}${m.waiting ? ' waiting' : ''}" id="m-${m.id}" style="--c:${color}">
-    <div class="who">${who}</div>
+    <div class="who">${who}${copyBtn}</div>
     <div class="body"><div class="txt">${body}</div>
       ${typeof attachmentsHtml === 'function' ? attachmentsHtml(m) : ''}
       <div class="activity">${act}</div>
@@ -568,10 +585,11 @@ function renderStatus() {
 // ---- websocket ----
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => { if (current) ws.send(JSON.stringify({ type: 'subscribe', sessionId: current.id })); };
+  ws.onopen = () => { if (current) ws.send(JSON.stringify({ type: 'subscribe', sessionId: current.id })); if (typeof termReconnected === 'function') termReconnected(); };
   ws.onclose = () => setTimeout(connect, 1000);
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
+    if (ev.type && ev.type.startsWith('term:')) { if (typeof onTermEvent === 'function') onTermEvent(ev); return; }
     if (ev.type === 'signin') { if (typeof onSigninEvent === 'function') onSigninEvent(ev.flow); return; }
     if (ev.type === 'sessions') { if (ev.deleted && current && current.id === ev.deleted) leaveSession(); loadSessions(); return; }
     if (typeof handleAttentionEvent === 'function' && handleAttentionEvent(ev)) return;
@@ -896,6 +914,7 @@ $('aAdd').onclick = async () => {
 })();
 </script>
 <script src="/panel.js"></script>
+<script src="/terminal.js"></script>
 <script src="/attention.js"></script>
 <script src="/connectors.js"></script>
 <script src="/collab.js"></script>

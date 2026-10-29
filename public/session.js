@@ -34,6 +34,7 @@ function openSessMenu(id, x, y) {
   smenu.innerHTML = `
     <button role="menuitem" data-m="rename">${ic('pencil', 'sm')}Rename</button>
     <button role="menuitem" data-m="context">${ic('notes', 'sm')}Session context…</button>
+    <button role="menuitem" data-m="terminal">${ic('terminal', 'sm')}Open terminal<span class="kbd">⌃\`</span></button>
     <button role="menuitem" data-m="import">${ic('import', 'sm')}Bring in a chat…</button>
     <button role="menuitem" data-m="export">${ic('export', 'sm')}Export as Markdown</button>
     <div class="msep"></div>
@@ -51,6 +52,7 @@ smenu.addEventListener('click', async (e) => {
   if (b.dataset.m === 'rename') startRename(id);
   if (b.dataset.m === 'context') { if (!current || current.id !== id) await openSession(id); openContext(); }
   if (b.dataset.m === 'import' || b.dataset.m === 'export') { if (!current || current.id !== id) await openSession(id); $(b.dataset.m === 'import' ? 'importBtn' : 'exportBtn').click(); }
+  if (b.dataset.m === 'terminal') { if (!current || current.id !== id) await openSession(id); openPanel('terminal'); }
   if (b.dataset.m === 'delete') deleteSession(id);
 });
 smenu.addEventListener('keydown', (e) => {

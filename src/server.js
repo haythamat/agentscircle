@@ -237,7 +237,7 @@ function buildPrompt(s, agent, triggerMsg, wt, circleTools = false) {
       const shared = connectors.supports(tool) ? connectors.forAgent(agent).map((c) => c.name) : [];
       return shared.length ? [`Connectors shared through AgentsCircle (MCP servers) available to you: ${shared.join(', ')}.`] : [];
     })(),
-    ...(circleTools ? [`You have AgentsCircle tools (the "agentscircle" connector): read_thread for older messages, list_agents to see who is here and what they can do, ask_user to ask the user a question with options when you truly can't decide${handoffsOn ? ', and mention to hand a task to another agent' : ''}.`] : []),
+    ...(circleTools ? [`You have AgentsCircle tools (the "agentscircle" connector): read_thread for older messages, list_agents to see who is here and what they can do, ask_user to ask the user a question with options when you truly can't decide, commit to commit changes with git when the user asks (use it instead of running git commit yourself; your sandbox may block writing to .git)${handoffsOn ? ', and mention to hand a task to another agent' : ''}.`] : []),
     ...(handoffsOn ? [circleTools
       ? `To hand part of the work to another agent, call the mention tool. Only hand off when another agent is clearly better placed or the user asked for it. Don't hand back and forth.`
       : `To hand part of the work to another agent, end your reply with one line per hand-off, exactly like: "@codex: write tests for the login form". Only hand off when another agent is clearly better placed or the user asked for it. Don't hand back and forth.`] : []),
@@ -1016,6 +1016,13 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(ROOT, 'public')));
+// The terminal's on-page part (xterm.js), served from its npm package.
+{
+  const pkgDir = (name) => { try { return path.dirname(require.resolve(`${name}/package.json`)); } catch { return null; } };
+  const xterm = pkgDir('@xterm/xterm'), fit = pkgDir('@xterm/addon-fit');
+  if (xterm) { app.get('/vendor/xterm/xterm.js', (req, res) => res.sendFile(path.join(xterm, 'lib/xterm.js'))); app.get('/vendor/xterm/xterm.css', (req, res) => res.sendFile(path.join(xterm, 'css/xterm.css'))); }
+  if (fit) app.get('/vendor/xterm/addon-fit.js', (req, res) => res.sendFile(path.join(fit, 'lib/addon-fit.js')));
+}
 
 app.get('/api/agents', (_req, res) => res.json(agentsPayload()));
 app.get('/api/tools', (_req, res) => res.json(accounts.publicTools()));
@@ -1309,6 +1316,7 @@ app.patch('/api/sessions/:id', (req, res) => {
 app.delete('/api/sessions/:id', (req, res) => {
   const s = getSession(req, res); if (!s) return;
   for (const r of s.runs.values()) killTree(r.child);
+  terminals.kill(s.id);
   for (const id of Object.keys(s.worktrees || {})) worktrees.discard(s, id);
   sessions.delete(s.id);
   fs.rmSync(sessionFile(s.id), { force: true });
@@ -1436,6 +1444,29 @@ app.post('/api/internal/circle/mention', (req, res) => {
   if (r.s.mode === 'parallel') pump(r.s);
   res.json({ text: r.s.mode === 'parallel' ? `@${to} got the task and starts now on its own branch.` : `@${to} got the task and starts when your turn ends. Finish your own part, then end your turn.` });
 });
+// An agent asks AgentsCircle to commit (its own sandbox may block writing to .git).
+app.post('/api/internal/circle/commit', (req, res) => {
+  const r = runFor(req, res); if (!r) return r === false ? undefined : res.json({ error: 'This run ended.' });
+  const b = req.body || {};
+  const message = String(b.message || '').trim().slice(0, 2000);
+  if (!message) return res.json({ error: 'Write a commit message (message).' });
+  if (r.reply.workdir) return res.json({ error: 'You work on your own branch in parallel mode; commit there with git, or the user applies your branch.' });
+  if (!checkpoints.isRepo(r.s.folder)) return res.json({ error: 'This folder isn\'t a git repository.' });
+  const snap = gitSnapshot(r.s.folder);
+  if (!snap || !snap.files.size) return res.json({ error: 'There are no uncommitted changes.' });
+  let paths;
+  if (b.all) paths = [...snap.files.keys()];
+  else {
+    const want = (Array.isArray(b.files) ? b.files : []).map((f) => String(f).replace(/^\.\//, '').trim()).filter(Boolean);
+    if (!want.length) return res.json({ error: 'List the files to commit (files), or set all: true to commit every uncommitted change.' });
+    const bad = want.filter((f) => !safePath(r.s, f) || !snap.files.has(f));
+    if (bad.length) return res.json({ error: `These aren't uncommitted changes in the project: ${bad.join(', ')}. Uncommitted: ${[...snap.files.keys()].slice(0, 30).join(', ')}` });
+    paths = want;
+  }
+  try { const out = commitPaths(r.s, paths, message, { who: `@${r.agent.id}`, what: `${paths.length === 1 ? paths[0] : `${paths.length} files`} (asked through AgentsCircle)` }); res.json({ text: `Committed ${out.hash}: ${out.files.join(', ')}` }); }
+  catch (e) { res.json({ error: e.message }); }
+});
+
 app.post('/api/internal/circle/ask', (req, res) => {
   const r = runFor(req, res); if (!r) return r === false ? undefined : res.json({ error: 'This run ended.' });
   const b = req.body || {};
@@ -1800,16 +1831,28 @@ app.post('/api/sessions/:id/commit', (req, res) => {
   if (!message) return res.status(400).json({ error: 'Write a commit message.' });
   const snap = gitSnapshot(s.folder);
   const paths = sessionFiles(s).filter((f) => !f.wt && (agent === '' || f.agents.includes(agent)) && snap && snap.files.has(f.path)).map((f) => f.path);
-  if (!paths.length) return res.status(400).json({ error: 'Nothing left to commit for that agent.' });
+  try { res.json(commitPaths(s, paths, message, { who: 'You', what: agent ? `@${agent}'s changes` : 'the session\'s changes' })); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Commit some files in the session's folder. AgentsCircle runs git itself, so this works even
+// when an agent's sandbox can't write to .git (Codex's normal mode).
+function commitPaths(s, paths, message, { who, what }) {
+  if (!paths.length) throw new Error('Nothing left to commit.');
   const git = (args) => spawn.sync('git', args, { cwd: s.folder, encoding: 'utf8', windowsHide: true });
   const add = git(['add', '-A', '--', ...paths]);
-  if (add.status !== 0) return res.status(400).json({ error: (add.stderr || 'git add failed').trim() });
+  if (add.status !== 0) throw new Error((add.stderr || 'git add failed').trim());
   const c = git(['commit', '-m', message, '--', ...paths]);
-  if (c.status !== 0) return res.status(400).json({ error: ((c.stderr || '') + (c.stdout || '')).trim().split('\n').slice(-3).join(' ') || 'git commit failed' });
+  if (c.status !== 0) {
+    const out = ((c.stderr || '') + (c.stdout || '')).trim();
+    if (/tell me who you are|user\.email|user\.name/i.test(out)) throw new Error('git doesn\'t know your name and email yet. In Terminal run: git config --global user.name "Your Name" and git config --global user.email you@example.com, then commit again.');
+    if (/index\.lock/i.test(out)) throw new Error('Another git command is running in this folder (or crashed and left .git/index.lock). Wait a moment, or delete .git/index.lock if nothing else is running, then try again.');
+    throw new Error(out.split('\n').slice(-3).join(' ') || 'git commit failed');
+  }
   const hash = run('git', ['rev-parse', '--short', 'HEAD'], s.folder);
-  addMessage(s, { role: 'system', kind: 'commit', text: `You committed ${agent ? `@${agent}'s changes` : 'the session\'s changes'}: ${hash} "${message.split('\n')[0]}" (${paths.length} file${paths.length > 1 ? 's' : ''}).` });
-  res.json({ ok: true, hash, files: paths });
-});
+  addMessage(s, { role: 'system', kind: 'commit', text: `${who} committed ${what}: ${hash} "${message.split('\n')[0]}" (${paths.length} file${paths.length > 1 ? 's' : ''}).` });
+  return { ok: true, hash, files: paths };
+}
 
 app.get('/api/sessions/:id/file', (req, res) => {
   const s = getSession(req, res); if (!s) return;
@@ -1907,6 +1950,34 @@ app.get('/api/sessions/:id/export', (req, res) => {
   res.type('text/markdown').send(md);
 });
 
+// ---------- terminal ----------
+// A shell in the session's folder, shown in the panel's Terminal tab. Output goes to everyone
+// watching the session; it keeps running when nobody is.
+const terminals = require('./terminal')({
+  onData: (sessionId, data) => broadcast(sessionId, { type: 'term:data', sessionId, data }),
+  onExit: (sessionId, code) => broadcast(sessionId, { type: 'term:exit', sessionId, code }),
+});
+function onTermMessage(ws, msg) {
+  const s = sessions.get(msg.sessionId);
+  const reply = (ev) => { try { ws.send(JSON.stringify(ev)); } catch { /* closed */ } };
+  if (!s) return reply({ type: 'term:error', sessionId: msg.sessionId, message: 'That session is gone.' });
+  try {
+    if (msg.type === 'term:open') {
+      if (msg.restart) terminals.kill(s.id);
+      const t = terminals.open(s.id, s.folder, { cols: msg.cols, rows: msg.rows });
+      if (msg.cols && msg.rows) terminals.resize(s.id, msg.cols, msg.rows);
+      reply({ type: 'term:ready', sessionId: s.id, ...t });
+    } else if (msg.type === 'term:in') terminals.write(s.id, msg.data);
+    else if (msg.type === 'term:resize') terminals.resize(s.id, msg.cols, msg.rows);
+    else if (msg.type === 'term:kill') { terminals.kill(s.id); reply({ type: 'term:exit', sessionId: s.id, code: null, closed: true }); }
+  } catch (e) { reply({ type: 'term:error', sessionId: s.id, message: e.message }); }
+}
+app.get('/api/sessions/:id/terminal', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const t = terminals.get(s.id);
+  res.json({ ...(t ? { ...t, buffer: undefined } : { alive: false }), ...terminals.available() });
+});
+
 // ---------- start ----------
 const server = http.createServer(app);
 const wss = new WebSocketServer({
@@ -1919,6 +1990,7 @@ wss.on('connection', (ws) => {
   ws.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw);
+      if (msg.type && msg.type.startsWith('term:')) { onTermMessage(ws, msg); return; }
       if (msg.type === 'subscribe') {
         idleClients.delete(ws);
         if (current) subscribers.get(current)?.delete(ws);
@@ -1958,6 +2030,7 @@ const ready = new Promise((resolve, reject) => {
 
 // Stop every running agent (used when the app quits).
 function stopAll() {
+  try { terminals.killAll(); } catch { /* quitting */ }
   for (const s of sessions.values()) for (const r of (s.runs || new Map()).values()) { r.stopRequested = true; killTree(r.child); }
 }
 module.exports = { ready, stopAll, port: PORT };

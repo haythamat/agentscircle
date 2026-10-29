@@ -1,6 +1,6 @@
 {
   "name": "agentscircle",
-  "version": "1.3.5",
+  "version": "1.3.6",
   "description": "One chat for all your AI coding agents: @mention Claude Code, Codex, Cursor and OpenCode in one shared session.",
   "main": "electron/main.js",
   "scripts": {
@@ -11,14 +11,18 @@
     "dist:win": "electron-builder --win",
     "dist:linux": "electron-builder --linux",
     "tools:keygen": "node scripts/keygen.js",
-    "tools:sign": "node scripts/sign-tools.js"
+    "tools:sign": "node scripts/sign-tools.js",
+    "postinstall": "node scripts/fix-pty.js"
   },
   "license": "FSL-1.1-ALv2",
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "adm-zip": "^0.6.1",
     "cross-spawn": "^7.0.6",
     "electron-updater": "^6.8.11",
     "express": "^5.3.0",
+    "node-pty": "^1.1.0",
     "smol-toml": "^1.9.1",
     "ws": "^8.22.0"
   },
@@ -46,7 +50,7 @@
   "build": {
     "appId": "dev.agentscircle.desktop",
     "productName": "AgentsCircle",
-    "copyright": "Copyright \u00a9 2026 AgentsCircle",
+    "copyright": "Copyright © 2026 AgentsCircle",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -61,7 +65,8 @@
     ],
     "asarUnpack": [
       "src/circle-mcp.js",
-      "src/mock-agent.js"
+      "src/mock-agent.js",
+      "node_modules/node-pty/**"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -124,6 +129,7 @@
     "generateUpdatesFilesForAllChannels": true,
     "appImage": {
       "artifactName": "${productName}-Linux.${ext}"
-    }
+    },
+    "npmRebuild": false
   }
 }

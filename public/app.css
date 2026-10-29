@@ -896,3 +896,36 @@ header .tools { flex: none; }
 .sistep.done .num { background: var(--ok-bg); border-color: transparent; color: var(--ok); }
 .sistep a { color: var(--accent); }
 #signinModal, #askModal { z-index: 55; }
+
+.commitform { margin-top: 4px; display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.commitform label { margin: 0; }
+.commitform textarea { min-height: 52px; font-size: 13px; resize: vertical; width: 100%; box-sizing: border-box; }
+.commitform .cfbtns { display: flex; align-items: center; gap: 6px; }
+
+/* Copy buttons */
+.codeblock { position: relative; }
+.codeblock .codelang { position: absolute; top: 7px; left: 12px; font: 600 10.5px/1 var(--font-cond); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); pointer-events: none; }
+.codeblock .codelang + .copybtn + pre { padding-top: 26px; }
+.copybtn { border: none; background: transparent; color: var(--muted); width: 26px; height: 26px; min-height: 26px; padding: 0; border-radius: 6px; display: inline-grid; place-items: center; cursor: pointer; transition: color var(--t-fast) ease, background-color var(--t-fast) ease, opacity var(--t-fast) ease; }
+.copybtn:hover { color: var(--text); background: var(--sel); }
+.copybtn.copied { color: var(--ok); }
+.codeblock .copybtn { position: absolute; top: 5px; right: 5px; background: var(--code-bg); opacity: 0; }
+.codeblock:hover .copybtn, .codeblock .copybtn:focus-visible, .codeblock .copybtn.copied { opacity: 1; }
+@media (hover: none) { .codeblock .copybtn { opacity: 1; } }
+.msg .who .msgcopy { margin-left: 2px; opacity: 0; }
+.msg:hover .who .msgcopy, .msg .who .msgcopy:focus-visible, .msg .who .msgcopy.copied { opacity: 1; }
+.msg.user .who .msgcopy { order: -1; }
+
+/* ---------- terminal tab ---------- */
+#panelBody.term-on { display: flex; flex-direction: column; overflow: hidden; padding: 8px 10px 10px; gap: 6px; }
+.termbar { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.termwhere { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; color: var(--muted); font: 500 12px/1.2 var(--mono); }
+.termwhere span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.termacts { display: flex; gap: 2px; flex: none; }
+#termNote { margin: 0; font-size: 12px; }
+#termHost { flex: 1; min-height: 120px; background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 4px 4px 8px; overflow: hidden; }
+#termHost .xterm { height: 100%; }
+#termHost .xterm-viewport { background: transparent !important; }
+#termHost .xterm-viewport::-webkit-scrollbar { width: 8px; }
+#termHost .xterm-viewport::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+.cmenu .kbd { margin-left: auto; padding-left: 16px; color: var(--muted); font-size: 11.5px; }

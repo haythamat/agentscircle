@@ -64,6 +64,15 @@ const TOOLS = [
     }, required: ['agent', 'task'] },
   },
   {
+    name: 'commit',
+    description: 'Commit changes in the project with git, through AgentsCircle. Use this instead of running git commit yourself: your sandbox may not be allowed to write to .git. Only commit when the user asked for it.',
+    inputSchema: { type: 'object', properties: {
+      message: { type: 'string', description: 'The commit message.' },
+      files: { type: 'array', items: { type: 'string' }, description: 'Paths (relative to the project folder) of the changed files to commit.' },
+      all: { type: 'boolean', description: 'Commit every uncommitted change in the project instead of listing files.' },
+    }, required: ['message'] },
+  },
+  {
     name: 'ask_user',
     description: 'Ask the user a question in the chat and wait for the answer. Prefer 2-5 short options when you can; the user can always type their own answer. Use it only when you can\'t reasonably decide yourself.',
     inputSchema: { type: 'object', properties: {
@@ -95,6 +104,10 @@ async function callTool(name, args) {
     if (name === 'list_agents') return text((await call('POST', '/circle/agents', {})).agents);
     if (name === 'mention') {
       const r = await call('POST', '/circle/mention', args);
+      return r.error ? { ...text(r.error), isError: true } : text(r.text);
+    }
+    if (name === 'commit') {
+      const r = await call('POST', '/circle/commit', args);
       return r.error ? { ...text(r.error), isError: true } : text(r.text);
     }
     if (name === 'ask_user') {

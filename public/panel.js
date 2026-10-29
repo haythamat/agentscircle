@@ -44,6 +44,7 @@ function setTab(tab) {
   panel.tab = tab; localStorage.setItem('agentscircle:tab', tab);
   document.querySelectorAll('#panelTabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
   if (tab !== 'files') panel.file = null;
+  if (tab !== 'terminal' && typeof leaveTerminal === 'function') leaveTerminal();
   panelRefresh(true);
 }
 function panelReset() { panel.file = null; panelRefresh(true); }
@@ -51,7 +52,7 @@ function panelReset() { panel.file = null; panelRefresh(true); }
 let refreshQueued = false;
 function panelRefresh(now) {
   if (!document.body.classList.contains('panel-open') || !current) return updateTabCounts();
-  if (now) return renderPanel();
+  if (now) return renderPanel(true);
   if (refreshQueued) return;
   refreshQueued = true;
   setTimeout(() => { refreshQueued = false; renderPanel(); }, 250);
@@ -70,9 +71,15 @@ function updateTabCounts() {
   if (bt) bt.style.display = current.mode === 'parallel' || (current.worktrees && Object.keys(current.worktrees).length) ? '' : 'none';
 }
 
-function renderPanel() {
+function renderPanel(now) {
   updateTabCounts();
   const body = $('panelBody');
+  if (panel.tab === 'terminal') {
+    // The shell draws itself; only (re)attach when shown fresh or for another session.
+    if (now || !term.x || !term.host.isConnected || term.sessionId !== current.id) renderTerminal();
+    return;
+  }
+  body.classList.remove('term-on');
   if (panel.tab === 'progress') {
     flipBoard(() => { body.innerHTML = progressHtml(); });
     const b = $('sumNow');
@@ -80,7 +87,9 @@ function renderPanel() {
   }
   else if (panel.tab === 'files') {
     if (panel.turn) { const t = current.messages.find((x) => x.id === panel.turn); if (t && !!t.undone !== panel.turnUndone) openTurnReview(panel.turn); return; }
-    if (panel.file) { if (panel.view === 'edit' && $('edText')) return; return renderFile(); } filesListHtml().then((h) => { if (panel.tab === 'files' && !panel.file) body.innerHTML = h; }); }
+    if (panel.file) { if (panel.view === 'edit' && $('edText')) return; return renderFile(); }
+    if (!now && document.querySelector('.commitform:not([style*="none"])')) return; // writing a commit message
+    filesListHtml().then((h) => { if (panel.tab === 'files' && !panel.file) body.innerHTML = h; }); }
   else if (panel.tab === 'branches') { renderBranches(); }
   else {
     const meters = current.members.filter((id) => ['claude', 'codex'].includes((agents.find((a) => a.id === id) || {}).tool));
@@ -215,7 +224,9 @@ async function filesListHtml() {
   const filterBar = byAgent.length > 1 || pick ? `<div class="afilter"><button data-fagent="" class="${pick ? '' : 'on'}">All</button>${byAgent.map((a) => `<button data-fagent="${esc(a)}" class="${pick === a ? 'on' : ''}"><i style="background:${agentColor(a)}"></i>@${esc(a)} <span class="hint" style="margin:0">${shared.filter((f) => f.agents.includes(a)).length}</span></button>`).join('')}</div>` : '';
   const toCommit = shared.filter((f) => f.uncommitted && (!pick || f.agents.includes(pick)));
   const shareWarn = pick ? toCommit.filter((f) => f.agents.length > 1) : [];
-  const commitBar = toCommit.length && current.isRepo !== false ? `<div class="pcard commitbar"><div class="hint" style="margin:0 0 6px">${toCommit.length} uncommitted file${toCommit.length > 1 ? 's' : ''}${pick ? ` changed by @${esc(pick)}` : ' changed in this session'}${shareWarn.length ? ` · ${shareWarn.length} also changed by another agent (the whole file is committed)` : ''}</div><button class="primary" data-commit="${esc(pick)}">Commit ${pick ? `@${esc(pick)}'s changes` : 'these changes'}</button></div>` : '';
+  const commitBar = toCommit.length && current.isRepo !== false ? `<div class="pcard commitbar"><div class="hint" style="margin:0 0 6px">${toCommit.length} uncommitted file${toCommit.length > 1 ? 's' : ''}${pick ? ` changed by @${esc(pick)}` : ' changed in this session'}${shareWarn.length ? ` · ${shareWarn.length} also changed by another agent (the whole file is committed)` : ''}</div><button class="primary" data-commit="${esc(pick)}">Commit ${pick ? `@${esc(pick)}'s changes` : 'these changes'}</button>
+    <div class="commitform" style="display:none"><label for="commitMsg">Commit message</label><textarea id="commitMsg" rows="2" spellcheck="true"></textarea>
+    <div class="cfbtns"><span class="hint" style="margin:0">⌘↵ to commit</span><span style="flex:1"></span><button data-commitcancel>Cancel</button><button class="primary" data-commitgo="${esc(pick)}">Commit</button></div><div class="err" id="commitErr"></div></div></div>` : '';
   const others = files.filter((f) => !(f.isNew && f.exists));
   return filterBar + commitBar + section('Created', created.filter(visible)) + section('Changed', others.filter(visible))
     + (commits.length ? `<div class="psec">Commits</div>${commits.map((x) => `<div class="commit"><i style="background:${agentColor(x.agent)}"></i>${esc(x.c)}</div>`).join('')}` : '');
@@ -223,16 +234,27 @@ async function filesListHtml() {
 $('panelBody').addEventListener('click', async (e) => {
   const fa = e.target.closest('[data-fagent]');
   if (fa) { panel.fileAgent = fa.dataset.fagent; renderPanel(); return; }
+  // Commit: write the message right here (the desktop app has no prompt() box).
   const cb = e.target.closest('[data-commit]');
   if (cb) {
     const who = cb.dataset.commit;
     const last = [...current.messages].reverse().find((m) => m.role === 'agent' && (!who || m.agent === who) && m.status === 'done');
     const suggestion = last ? (last.statusLine || (last.text || '').split('\n').find((l) => l.trim()) || '').replace(/^[#*\s-]+/, '').slice(0, 72) : '';
-    const message = prompt(`Commit message${who ? ` for @${who}'s changes` : ''}:`, suggestion);
-    if (!message) return;
-    cb.disabled = true;
-    try { const r = await api(`/api/sessions/${current.id}/commit`, { method: 'POST', body: { agent: who, message } }); renderPanel(); }
-    catch (err) { alert(err.message); cb.disabled = false; }
+    const form = cb.parentElement.querySelector('.commitform');
+    cb.style.display = 'none'; form.style.display = '';
+    const ta = form.querySelector('textarea'); ta.value = suggestion; ta.focus(); ta.select();
+    ta.onkeydown = (ev) => { if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') { ev.preventDefault(); form.querySelector('[data-commitgo]').click(); } if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); form.querySelector('[data-commitcancel]').click(); } };
+    return;
+  }
+  if (e.target.closest('[data-commitcancel]')) { renderPanel(true); return; }
+  const go = e.target.closest('[data-commitgo]');
+  if (go) {
+    const form = go.closest('.commitform');
+    const message = form.querySelector('textarea').value.trim();
+    if (!message) { form.querySelector('.err').textContent = 'Write a commit message.'; return; }
+    go.disabled = true; go.textContent = 'Committing…';
+    try { await api(`/api/sessions/${current.id}/commit`, { method: 'POST', body: { agent: go.dataset.commitgo, message } }); renderPanel(true); }
+    catch (err) { form.querySelector('.err').textContent = err.message; go.disabled = false; go.textContent = 'Commit'; }
     return;
   }
   if (e.target.closest('[data-jump]')) return;
