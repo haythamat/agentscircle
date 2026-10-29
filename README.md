@@ -55,7 +55,7 @@ Sessions are saved in `~/.agentscircle/sessions`.
 - **Resizable panel:** drag the panel's edge to make it wider (or taller when it sits below the chat). Double-click the edge or use the expand button to give it as much room as the chat allows; click again to go back. The size is remembered.
 - **Edit files in the panel:** open a file from the Files tab, a file chip or an attachment, and use **Edit**. It has line numbers, Tab and Shift+Tab indenting, and keeps your indentation on new lines. Save with ⌘S (Ctrl+S). Unsaved edits stay while you move around the panel. If an agent changed the file after you opened it, AgentsCircle asks before overwriting. Every save adds a note to the chat, so the next agent knows you changed the file.
 
-## Terminal, copy buttons and commits (v1.3.6)
+## Terminal, copy buttons and commits (v1.3.7)
 
 - **Terminal in the session.** The panel's **Terminal** tab (or Ctrl + backtick, or **Open terminal** in the session menu) opens your shell in the session's folder. It keeps running when you switch tabs or sessions, and redraws when you come back. ⌘K clears it; the bar has Restart and End.
 - **Copy buttons.** Every code block in the chat has a copy button, and every message has one beside its name (it copies the message as Markdown).
@@ -91,7 +91,7 @@ Every agent that can use connectors (Claude Code, Codex, Cursor, OpenCode) gets 
 - **list_agents** shows who is in the circle, which account each uses, whether it's busy, and its skills and connectors.
 - **mention** hands a task to another agent (respects the Hand-offs switch and the limit of 4 in a row).
 - **ask_user** shows a question card in the chat, with options, and waits for your answer.
-- **commit** commits files with git when you ask an agent to commit (v1.3.6). AgentsCircle runs the commit, so it works even when the agent's sandbox can't write to `.git` (Codex's usual case), and the chat shows what was committed.
+- **commit** commits files with git when you ask an agent to commit (v1.3.7). AgentsCircle runs the commit, so it works even when the agent's sandbox can't write to `.git` (Codex's usual case), and the chat shows what was committed.
 
 Each run gets its own key, valid only while it runs, and the connector only talks to AgentsCircle on your computer. Tools without connector support still hand off with `@codex: task` lines.
 

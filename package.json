@@ -1,6 +1,6 @@
 {
   "name": "agentscircle",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "description": "One chat for all your AI coding agents: @mention Claude Code, Codex, Cursor and OpenCode in one shared session.",
   "main": "electron/main.js",
   "scripts": {
