@@ -37,6 +37,7 @@ const UPDATE_TEXT = { idle: 'Not checked yet.', checking: 'Checking for updatesâ
 async function loadAbout() {
   const pane = $('setAbout');
   const info = await api('/api/app');
+  if (typeof loadUsageCounts === 'function') await loadUsageCounts();
   const d = desk ? await desk.appInfo() : null;
   const u = d ? d.update : null;
   pane.innerHTML = `
@@ -61,6 +62,7 @@ async function loadAbout() {
       <div class="hint">${info.tools.remoteEnabled ? `If an agent changes how it works, AgentsCircle downloads a signed fix automatically. ${info.tools.lastCheck ? `Last check: ${esc(info.tools.lastCheck.result)}${info.tools.lastCheck.error ? ' (' + esc(info.tools.lastCheck.error) + ')' : ''}.` : ''}` : 'Automatic fixes aren\'t set up in this build.'}</div>
       ${info.tools.remoteEnabled ? '<button id="toolsCheck" style="margin-top:8px;padding:4px 10px;font-size:12px">Check for fixes</button>' : ''}
     </div>
+    ${typeof usageCountsHtml === 'function' ? usageCountsHtml() : ''}
     <div class="psec">Your data</div>
     <div class="upbox"><div class="hint" style="margin:0">Sessions, accounts, connectors and skills are in <code>${esc(info.dataDir)}</code> (data format ${info.dataVersion}). Updates never delete them; a backup is made before any format upgrade. ${info.secrets && info.secrets !== 'file' ? `API keys and connector tokens are encrypted with your ${esc(info.secrets)}.` : 'API keys and connector tokens are in files only you can read (the desktop app keeps them in your keychain instead).'}</div>
       ${d ? '<div style="display:flex;gap:6px;margin-top:8px"><button id="openData" style="padding:4px 10px;font-size:12px">Open data folder</button><button id="openLogs" style="padding:4px 10px;font-size:12px">Open logs folder</button></div>' : ''}</div>
@@ -71,6 +73,7 @@ async function loadAbout() {
   if ($('toolsCheck')) $('toolsCheck').onclick = async () => { $('toolsCheck').disabled = true; await api('/api/app/check-tools', { method: 'POST' }); loadAbout(); };
   if ($('openData')) $('openData').onclick = () => desk.openPath('data');
   if ($('openLogs')) $('openLogs').onclick = () => desk.openPath('logs');
+  if (typeof wireUsageCounts === 'function') wireUsageCounts(loadAbout);
   $('rerunSetup').onclick = () => { $('acctModal').classList.remove('open'); openSetup(); };
 }
 
@@ -134,7 +137,7 @@ async function openSetup(state) {
     catch (e) { note(`<span class="err">${esc(e.message)}</span>`); }
   });
   $('setupRescan').onclick = async () => { $('setupRescan').textContent = 'Checkingâ€¦'; const folder = $('setupFolder').value; const st = await api('/api/setup/rescan', { method: 'POST' }); agents = await api('/api/agents'); await openSetup(st); $('setupFolder').value = folder; };
-  $('setupSkip').onclick = async () => { await api('/api/app/settings', { method: 'PATCH', body: { onboarded: true } }); $('setupModal').classList.remove('open'); };
+  $('setupSkip').onclick = async () => { await api('/api/app/settings', { method: 'PATCH', body: { onboarded: true } }); $('setupModal').classList.remove('open'); if (typeof maybeAskUsageCounts === 'function') setTimeout(maybeAskUsageCounts, 3000); };
   $('setupGo').onclick = async () => {
     $('setupErr').textContent = '';
     const folder = $('setupFolder').value.trim().replace(/^["']|["']$/g, '');
@@ -154,5 +157,6 @@ async function openSetup(state) {
   try {
     const st = await api('/api/setup');
     if (!st.onboarded) openSetup(st);
+    else if (typeof maybeAskUsageCounts === 'function') setTimeout(maybeAskUsageCounts, 4000);
   } catch { /* server not ready */ }
 })();

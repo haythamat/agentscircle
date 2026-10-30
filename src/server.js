@@ -53,6 +53,9 @@ const oauth = require('./oauth')({
 });
 const connectors = require('./connectors')({ dataDir: DATA_DIR, accounts, version: VERSION, vault, oauth, proxy: { base: `http://127.0.0.1:${PORT}/mcp-proxy`, secret: PROXY_SECRET } });
 const broadcastConnectors = () => broadcastAll({ type: 'connectors', connectors: connectors.list() });
+// Opt-in anonymous usage counts (off unless you turn it on). Where reports go: package.json
+// agentscircle.usageUrl, or AGENTSCIRCLE_USAGE_URL.
+const usageCounts = require('./usage-counts')({ dataDir: DATA_DIR, settings: appSettings, version: VERSION, url: process.env.AGENTSCIRCLE_USAGE_URL || (PKG.agentscircle && PKG.agentscircle.usageUrl) || '' });
 const skills = require('./skills')({ dataDir: DATA_DIR, accounts });
 const worktrees = require('./worktrees')({ dataDir: DATA_DIR });
 const conversations = require('./conversations')({ accounts });
@@ -656,6 +659,8 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
     }
     const workdir = wt ? wt.dir : s.folder;
     const runKey = crypto.randomBytes(8).toString('hex');
+    usageCounts.count(['claude', 'codex', 'cursor', 'opencode'].includes(tool.id) ? `agent_${tool.id}` : 'agent_other');
+    if (wt) usageCounts.count('mode_parallel');
     const before = changeSnapshot(workdir);
     const runStartedMs = Date.now();
     // Checkpoint before the turn (taken before AgentsCircle adds anything for the run).
@@ -774,6 +779,7 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
         final = final.replace(/(usage limit reached)\|\d{10}/i, '$1.');
         const until = agent.limitedUntil ? ` (resets around ${clock(agent.limitedUntil)})` : '';
         const next = autoSwitchOn() ? spareFor(s, agent) : null;
+        if (next) usageCounts.count('agent_limit_switch');
         const spare = accounts.list().filter((a) => a.tool === agent.tool && a.id !== agent.id && !accounts.benched(a)).map((a) => `@${a.id}`);
         final += next
           ? `\n\n_@${agent.id} hit its usage limit${until}. Switching to @${next.id}, which continues the same conversation._`
@@ -1113,6 +1119,7 @@ app.get('/oauth/callback', async (req, res) => {
   const r = await oauth.callback(req.query || {});
   if (r.ok) {
     const t = await connectors.test(r.name).catch((e) => ({ ok: false, message: e.message }));
+    if (t.ok && !t.needsSignIn) usageCounts.count('connector_signin');
     oauth.finish(r.name, t.ok && !t.needsSignIn, t.ok && !t.needsSignIn ? `Signed in. ${t.message} Every agent in your circles can use it.` : t.message);
     broadcastConnectors();
   }
@@ -1128,6 +1135,37 @@ ${ok ? '<script>setTimeout(()=>window.close(),1500)</script>' : ''}`);
 });
 
 app.use(express.json({ limit: '2mb' }));
+// Count which features are used (only when usage counts are on; see src/usage-counts.js).
+const ROUTE_COUNTS = [
+  ['POST', /^\/api\/sessions$/, 'session_created'], ['DELETE', /^\/api\/sessions\/[^/]+$/, 'session_deleted'],
+  ['POST', /^\/api\/sessions\/[^/]+\/messages$/, 'message_sent'], ['POST', /^\/api\/sessions\/[^/]+\/import$/, 'chat_imported'],
+  ['PUT', /^\/api\/sessions\/[^/]+\/agents\/[^/]+\/model$/, 'model_changed'], ['PUT', /^\/api\/sessions\/[^/]+\/context$/, 'context_set'],
+  ['PUT', /^\/api\/sessions\/[^/]+\/file$/, 'file_edited'], ['POST', /^\/api\/sessions\/[^/]+\/open-in$/, 'open_in_editor'],
+  ['POST', /^\/api\/sessions\/[^/]+\/commit$/, 'commit'], ['POST', /^\/api\/sessions\/[^/]+\/push$/, 'push'], ['POST', /^\/api\/sessions\/[^/]+\/pull$/, 'pull'],
+  ['POST', /^\/api\/sessions\/[^/]+\/publish$/, 'publish_github'], ['POST', /^\/api\/sessions\/[^/]+\/branches\/[^/]+\/apply$/, 'branch_applied'],
+  ['POST', /^\/api\/sessions\/[^/]+\/turns\/[^/]+\/undo$/, 'undo'], ['POST', /^\/api\/sessions\/[^/]+\/questions\/[^/]+$/, 'question_answered'],
+  ['POST', /^\/api\/sessions\/[^/]+\/approvals\/[^/]+$/, 'approval_answered'], ['POST', /^\/api\/agents$/, 'account_added'],
+  ['POST', /^\/api\/connectors$/, 'connector_added'], ['POST', /^\/api\/skills\/(upload|share)$/, 'skill_added'],
+  ['POST', /^\/api\/internal\/circle\/commit$/, 'commit_by_agent'], ['POST', /^\/api\/internal\/circle\/push$/, 'push_by_agent'], ['POST', /^\/api\/internal\/circle\/mention$/, 'handoff'],
+];
+const PREVIEW_KIND = { html: 'html', markdown: 'markdown', pdf: 'pdf', image: 'image', doc: 'doc', sheet: 'sheet', slides: 'slides', video: 'video', audio: 'audio', text: 'text' };
+const previewSeen = new Set();
+app.use((req, res, next) => {
+  if (!usageCounts.enabled()) return next();
+  res.on('finish', () => {
+    if (res.statusCode >= 400) return;
+    const hit = ROUTE_COUNTS.find(([m, re]) => m === req.method && re.test(req.path));
+    if (hit) usageCounts.count(hit[2]);
+    if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/export$/.test(req.path) && req.body && /^(docx|pdf|html|xlsx|csv)$/.test(req.body.to)) usageCounts.count(`export_${req.body.to}`);
+    if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/file$/.test(req.path) && req.query.path) {
+      const key = `${req.path}|${req.query.path}`;
+      if (!previewSeen.has(key)) { previewSeen.add(key); const k = PREVIEW_KIND[kindOf(String(req.query.path))]; if (k) usageCounts.count(`preview_${k}`); }
+    }
+  });
+  next();
+});
+app.get('/api/usage-counts', (_req, res) => res.json(usageCounts.state()));
+app.post('/api/usage-counts', (req, res) => { usageCounts.setEnabled(!!(req.body || {}).enabled); res.json(usageCounts.state()); });
 app.use(express.static(path.join(ROOT, 'public')));
 // The terminal's on-page part (xterm.js), served from its npm package.
 {
@@ -1427,6 +1465,7 @@ app.post('/api/github/signin-app', async (_req, res) => {
       spawn.sync('gh', ['auth', 'setup-git'], { windowsHide: true });
       const s2 = await github.status();
       f.state = s2.signedIn ? 'done' : 'failed';
+      if (s2.signedIn) usageCounts.count('github_signin');
       f.message = s2.signedIn ? `Signed in to GitHub as ${s2.user}. Push and clone now use this account.` : 'GitHub sign-in finished, but the GitHub CLI still isn\'t signed in.';
     } else if (f.state !== 'cancelled') {
       f.state = 'failed';
@@ -2271,6 +2310,7 @@ function onTermMessage(ws, msg) {
   try {
     if (msg.type === 'term:open') {
       if (msg.restart) terminals.kill(s.id);
+      if (!terminals.get(s.id) || !terminals.get(s.id).alive || msg.restart) usageCounts.count('terminal_opened');
       const t = terminals.open(s.id, s.folder, { cols: msg.cols, rows: msg.rows });
       if (msg.cols && msg.rows) terminals.resize(s.id, msg.cols, msg.rows);
       reply({ type: 'term:ready', sessionId: s.id, ...t });

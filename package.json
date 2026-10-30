@@ -1,6 +1,6 @@
 {
   "name": "agentscircle",
-  "version": "1.3.12",
+  "version": "1.3.13",
   "description": "One chat for all your AI coding agents: @mention Claude Code, Codex, Cursor and OpenCode in one shared session.",
   "main": "electron/main.js",
   "scripts": {
@@ -49,7 +49,8 @@
   "agentscircle": {
     "toolsUrl": "",
     "toolsPublicKey": "",
-    "_readme": "toolsUrl: raw URL of tools.json in your repo (e.g. https://raw.githubusercontent.com/haythamat/agentscircle/main/tools.json). toolsPublicKey: printed by npm run tools:keygen. Leave empty to turn signed agent-settings fixes off."
+    "_readme": "toolsUrl: raw URL of tools.json in your repo (e.g. https://raw.githubusercontent.com/haythamat/agentscircle/main/tools.json). toolsPublicKey: printed by npm run tools:keygen. Leave empty to turn signed agent-settings fixes off.",
+    "usageUrl": "https://agentscircle.dev/api/public/usage"
   },
   "build": {
     "appId": "dev.agentscircle.desktop",

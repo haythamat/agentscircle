@@ -55,6 +55,10 @@ Sessions are saved in `~/.agentscircle/sessions`.
 - **Resizable panel:** drag the panel's edge to make it wider (or taller when it sits below the chat). Double-click the edge or use the expand button to give it as much room as the chat allows; click again to go back. The size is remembered.
 - **Edit files in the panel:** open a file from the Files tab, a file chip or an attachment, and use **Edit**. It has line numbers, Tab and Shift+Tab indenting, and keeps your indentation on new lines. Save with ⌘S (Ctrl+S). Unsaved edits stay while you move around the panel. If an agent changed the file after you opened it, AgentsCircle asks before overwriting. Every save adds a note to the chat, so the next agent knows you changed the file.
 
+## Usage counts, off unless you turn them on (v1.3.13)
+
+AgentsCircle asks once whether you'd like to share anonymous usage counts, and you can change it any time in **Settings → About**. When it's on, once a day it sends which features you used and how many times (for example `export_docx: 2`), plus the app version and your OS, to agentscircle.dev. Never your code, prompts, file or project names, emails or account details. The install id is random and isn't linked to you. **See exactly what's sent** shows today's report. Turning it off deletes anything not sent yet.
+
 ## Push, documents and exports (v1.3.9)
 
 - **Push to GitHub.** The Files tab shows how many commits are waiting and has **Push** (and **Pull** when GitHub has newer commits). A folder that isn't on GitHub yet gets **Put on GitHub**: it creates a private (or public) repository on your account and pushes. Agents can push too, with the **push** circle tool. **Sign in to GitHub** happens in the app: it shows a one-time code and opens GitHub, no Terminal (it installs the GitHub CLI first if needed).
