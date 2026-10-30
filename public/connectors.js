@@ -21,11 +21,16 @@ async function loadConnectors() {
   renderConnectors();
 }
 
+const signable = (c) => c.type === 'remote' && c.auth === 'oauth' && !c.hasToken;
 function connStatus(c) {
   if (!c.enabled) return '<span class="pill">off</span>';
+  const f = c.signinFlow;
+  if (signable(c) && f && ['starting', 'browser', 'checking'].includes(f.state)) return `<span class="pill warn">${f.state === 'checking' ? 'checking…' : 'signing in…'}</span>`;
+  if (signable(c) && !c.signedIn) return '<span class="pill warn" title="Sign in once and every agent can use it.">needs sign-in</span>';
   const t = c.lastTest;
+  if (signable(c) && c.signedIn && (!t || (t.ok && !t.needsSignIn))) return '<span class="pill ok" title="' + esc(t ? t.message : 'Signed in') + '">signed in</span>';
   if (!t) return '<span class="pill">not tested</span>';
-  if (t.ok && t.needsSignIn) return '<span class="pill warn" title="' + esc(t.message) + '">needs sign-in per agent</span>';
+  if (t.ok && t.needsSignIn) return '<span class="pill warn" title="' + esc(t.message) + '">needs sign-in</span>';
   if (t.ok) return '<span class="pill ok" title="' + esc(t.message) + '">working</span>';
   return '<span class="pill bad" title="' + esc(t.message) + '">problem</span>';
 }
@@ -42,19 +47,18 @@ function renderConnectors() {
   const pane = $('setConnectors'); if (!pane) return;
   // Keep whatever is typed in an open form across re-renders.
   if ($('cfName')) { try { conn.form = { ...(conn.form || {}), ...readForm() }; } catch { /* ignore */ } }
-  const signable = (c) => c.type === 'remote' && c.auth === 'oauth';
   const rows = conn.list.map((c) => `<div class="acctrow crow ${c.enabled ? '' : 'disabled'}" data-name="${esc(c.name)}">
     <div style="display:flex;gap:10px;min-width:0">${connIcon(c)}
       <div style="min-width:0"><div class="h">${esc(c.title || c.name)} <span class="hint" style="margin:0;font-weight:400">${esc(c.name)} · ${c.type === 'remote' ? 'remote' : 'runs on this computer'} · ${AUTH_LABEL[c.auth]}${c.tokenLocked ? ' (token in the keychain; open the AgentsCircle app to use it)' : c.hasToken ? (c.tokenStore === 'keychain' ? ' (saved in your keychain)' : ' (saved)') : ''}</span>${connStatus(c)}</div>
       <div class="sub"><code>${esc(c.type === 'remote' ? c.url : [c.command, ...(c.args || [])].join(' '))}</code></div>
       <div class="sub">${esc(scopeText(c))}</div>
+      ${signable(c) && c.signedIn ? `<div class="sub">Signed in through AgentsCircle${c.signin && c.signin.signedInAt ? ' on ' + esc(new Date(c.signin.signedInAt).toLocaleDateString()) : ''}. One sign-in for every agent, kept by AgentsCircle on this computer.</div>` : ''}
       ${c.lastTest && !c.lastTest.ok ? `<div class="sub" style="color:var(--danger)">${esc(c.lastTest.message)}</div>` : c.lastTest && c.lastTest.tools ? `<div class="sub">${c.lastTest.tools.slice(0, 8).map((t) => `<span class="tag">${esc(t)}</span>`).join(' ')}${c.lastTest.tools.length > 8 ? ` +${c.lastTest.tools.length - 8}` : ''}</div>` : ''}</div></div>
     <div class="btns">
       <label class="switch" title="${c.enabled ? 'On: agents get this connector' : 'Off'}"><input type="checkbox" data-act="toggle" ${c.enabled ? 'checked' : ''}><span></span></label>
       <button data-act="test">${conn.busy[c.name] ? 'Testing…' : 'Test'}</button>
-      ${signable(c) ? '<button data-act="signin">Sign in</button>' : ''}
+      ${signable(c) ? (c.signedIn ? `${c.lastTest && !c.lastTest.ok && c.lastTest.needsSignIn ? '<button data-act="signin" class="primary">Sign in again</button>' : ''}<button data-act="signout">Sign out</button>` : `<button data-act="signin" class="primary">${c.signinFlow && ['starting', 'browser', 'checking'].includes(c.signinFlow.state) ? 'Signing in…' : 'Sign in'}</button>`) : ''}
       <button data-act="edit">Edit</button><button data-act="remove" class="danger">Remove</button></div>
-    ${signable(c) ? `<div class="signin" style="grid-column:1/-1;display:none"><span class="hint" style="margin:0">Sign in once for each agent that uses it:</span> ${c.agents.filter((a) => a.gets).map((a) => `<button data-signin="${esc(a.id)}">@${esc(a.id)}</button>`).join(' ') || '<span class="hint" style="margin:0">No agent uses it yet.</span>'}</div>` : ''}
   </div>`).join('');
 
   pane.innerHTML = `
@@ -135,7 +139,7 @@ function readForm() {
   };
   const tok = $('cfToken') && $('cfToken').value.trim();
   if (tok) body.token = tok;
-  delete body.agents; delete body.lastTest; delete body.hasToken; delete body.tokenLocked; delete body.tokenStore; delete body.added; delete body.needEnv; delete body.needHeaders; delete body.from;
+  delete body.agents; delete body.lastTest; delete body.hasToken; delete body.tokenLocked; delete body.tokenStore; delete body.added; delete body.needEnv; delete body.needHeaders; delete body.from; delete body.signedIn; delete body.signin; delete body.signinFlow; delete body.site;
   return body;
 }
 
@@ -188,7 +192,8 @@ function wireConnectors() {
         conn.form = null; conn.editing = null; if (conn.addTab === 'custom') conn.addTab = 'popular';
         $('cfName').id = 'cfNameOld';
         await loadConnectors();
-        testConnector(c.name, true);
+        const added = conn.list.find((x) => x.name === c.name);
+        if (added && signable(added) && !added.signedIn) signInConnector(c.name); else testConnector(c.name, true);
       } catch (e) { $('cfErr').textContent = e.message; }
     };
   }
@@ -202,18 +207,13 @@ function wireConnectors() {
         try {
           if (act === 'toggle') { await api('/api/connectors/' + encodeURIComponent(name), { method: 'PATCH', body: { enabled: el.checked } }); await loadConnectors(); }
           if (act === 'test') testConnector(name);
-          if (act === 'signin') { const s = row.querySelector('.signin'); s.style.display = s.style.display === 'none' ? 'flex' : 'none'; }
+          if (act === 'signin') signInConnector(name);
+          if (act === 'signout' && confirm(`Sign out of ${c.title || name}? Agents can't use it until you sign in again.`)) { await api(`/api/connectors/${encodeURIComponent(name)}/signout`, { method: 'POST' }); await loadConnectors(); note(`Signed out of ${esc(c.title || name)}.`); }
           if (act === 'edit') { if ($('cfName')) $('cfName').id = 'cfNameOld'; conn.editing = name; conn.form = { ...c }; renderConnectors(); $('cfName').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
           if (act === 'remove' && confirm(`Remove ${c.title || name}? Agents stop getting it from AgentsCircle. Their own settings aren't touched.`)) { await api('/api/connectors/' + encodeURIComponent(name), { method: 'DELETE' }); await loadConnectors(); }
         } catch (e) { alert(e.message); }
       };
       if (act === 'toggle') el.onchange = handler; else el.onclick = handler;
-    });
-    row.querySelectorAll('[data-signin]').forEach((b) => b.onclick = async () => {
-      try {
-        const r = await api(`/api/connectors/${encodeURIComponent(name)}/signin`, { method: 'POST', body: { agent: b.dataset.signin } });
-        note(`<b>A terminal window opened to sign @${esc(b.dataset.signin)} in to ${esc(c.title || name)}.</b> ${esc(r.hint || '')}<div class="hint" style="margin-top:6px">No window? Run this in Terminal: <code>${esc(r.command)}</code></div>`);
-      } catch (e) { note(`<span class="err">${esc(e.message)}</span>`); }
     });
   });
 }
@@ -223,4 +223,25 @@ async function testConnector(name, quiet) {
   try { const r = await api(`/api/connectors/${encodeURIComponent(name)}/test`, { method: 'POST' }); if (!quiet || !r.ok) note(esc(r.message)); }
   catch (e) { note(`<span class="err">${esc(e.message)}</span>`); }
   conn.busy[name] = false; await loadConnectors();
+}
+
+// Sign in once, in the browser; AgentsCircle keeps the sign-in and every agent uses it.
+async function signInConnector(name) {
+  const c = conn.list.find((x) => x.name === name) || { name };
+  note(`Opening ${esc(c.title || name)}'s sign-in page in your browser…`);
+  try {
+    const f = await api(`/api/connectors/${encodeURIComponent(name)}/oauth`, { method: 'POST' });
+    onConnectorSignin(f);
+  } catch (e) { note(`<span class="err">${esc(e.message)}</span>`); await loadConnectors().catch(() => {}); }
+}
+function onConnectorSignin(f) {
+  if (!f) return;
+  const c = conn.list.find((x) => x.name === f.connector);
+  if (c) c.signinFlow = f;
+  const title = esc((c && c.title) || f.connector);
+  if (f.state === 'browser') note(`<b>Finish signing in to ${title} in your browser.</b> Approve access, and this page updates by itself.${f.url ? ` <a href="${esc(f.url)}" target="_blank" rel="noopener">Open the sign-in page again</a>` : ''}`);
+  else if (f.state === 'checking') note(`Signed in to ${title}. Checking that it works…`);
+  else if (f.state === 'done') { note(`<b>${title}: ${esc(f.message || 'Signed in.')}</b>`); loadConnectors().catch(() => {}); return; }
+  else if (f.state === 'failed') { note(`<span class="err">${title}: ${esc(f.message || 'Sign-in failed.')}</span>`); loadConnectors().catch(() => {}); return; }
+  if ($('setConnectors') && !$('cfName')) renderConnectors();
 }

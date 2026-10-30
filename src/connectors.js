@@ -45,7 +45,7 @@ function siteOf(c) {
   return parts.slice(TWO_PART.test(host) ? -3 : -2).join('.');
 }
 
-module.exports = function createConnectors({ dataDir, accounts, version, vault }) {
+module.exports = function createConnectors({ dataDir, accounts, version, vault, oauth, proxy }) {
   const file = path.join(dataDir, 'connectors.json');
   const runDir = path.join(dataDir, 'mcp');
   fs.mkdirSync(runDir, { recursive: true });
@@ -132,6 +132,8 @@ module.exports = function createConnectors({ dataDir, accounts, version, vault }
     // A token kept in the keychain that can't be read here (outside the app) stays where it is.
     if (!c.token && !input.clearToken && prev.tokenLocked && c.name === prev.name) { c.tokenRef = prev.tokenRef; c.tokenLocked = true; }
     if (vault && (c.name !== prev.name || input.clearToken)) vault.delete(tokenName(prev));
+    if (oauth && c.name !== prev.name) oauth.rename(prev.name, c.name);
+    if (oauth && c.url !== prev.url) oauth.signOut(c.name); // a different server needs its own sign-in
     c.source = prev.source; c.createdAt = prev.createdAt; c.lastTest = null;
     LIST[i] = c;
     save();
@@ -142,16 +144,22 @@ module.exports = function createConnectors({ dataDir, accounts, version, vault }
     if (i < 0) throw new Error('No such connector.');
     const [gone] = LIST.splice(i, 1);
     if (vault) vault.delete(tokenName(gone));
+    if (oauth) oauth.signOut(gone.name);
     save();
   }
 
   // ---------- which connectors does this agent get? ----------
   const forAgent = (agent) => LIST.filter((c) => c.enabled && (c.scope === 'all' || c.scope.includes(agent.id)));
 
+  // Signed in through AgentsCircle: the agent talks to AgentsCircle's local proxy, which adds the
+  // sign-in. The agent only ever sees a key that works on this computer while AgentsCircle runs.
+  const signedIn = (c) => !!(oauth && c.type === 'remote' && !c.token && oauth.signedIn(c.name));
+  const viaProxy = (c) => (signedIn(c) && proxy ? { ...c, url: `${proxy.base}/${c.name}`, transport: 'http', headers: {}, token: proxy.secret, proxied: true } : c);
+
   // Translate shared connectors into launch arguments + environment for one run.
   function injection(agent, tool, runId, extraServers = {}, opts = {}) {
     const kind = support(tool);
-    const shared = kind ? forAgent(agent) : [];
+    const shared = kind ? forAgent(agent).map(viaProxy) : [];
     // AgentsCircle's own servers (the circle tools) go to every tool that can take MCP servers.
     const extras = kind ? Object.entries(extraServers).map(([name, v]) => ({ name, type: 'local', command: v.command, args: v.args || [], env: v.env || {}, headers: {}, extra: true })) : [];
     const list = [...shared, ...extras];
@@ -302,11 +310,18 @@ module.exports = function createConnectors({ dataDir, accounts, version, vault }
   async function testRemote(c) {
     const headers = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...c.headers };
     if (c.token) headers.Authorization = `Bearer ${c.token}`;
+    else if (signedIn(c)) { const t = await oauth.accessToken(c.name); if (t) headers.Authorization = `Bearer ${t}`; }
     try {
-      const r1 = await fetch(c.url, { method: 'POST', headers, body: JSON.stringify(rpc(1, 'initialize', initParams)), signal: AbortSignal.timeout(10000) });
+      let r1 = await fetch(c.url, { method: 'POST', headers, body: JSON.stringify(rpc(1, 'initialize', initParams)), signal: AbortSignal.timeout(10000) });
+      if (r1.status === 401 && !c.token && signedIn(c)) {
+        const t = await oauth.accessToken(c.name, { force: true });
+        if (t) { headers.Authorization = `Bearer ${t}`; r1 = await fetch(c.url, { method: 'POST', headers, body: JSON.stringify(rpc(1, 'initialize', initParams)), signal: AbortSignal.timeout(10000) }); }
+      }
       if (r1.status === 401 || r1.status === 403) {
         return c.auth === 'oauth'
-          ? { ok: true, reachable: true, needsSignIn: true, message: 'Reachable. Each agent signs in once (use Sign in).' }
+          ? (signedIn(c)
+            ? { ok: false, reachable: true, needsSignIn: true, message: 'The sign-in has expired. Sign in again.' }
+            : { ok: true, reachable: true, needsSignIn: true, message: 'Reachable. Sign in once and every agent can use it.' })
           : { ok: false, reachable: true, message: c.token ? 'The server rejected the token.' : 'The server wants you to sign in or add a token.' };
       }
       if (!r1.ok) return { ok: false, reachable: true, message: `Server answered ${r1.status}.` };
@@ -443,13 +458,15 @@ module.exports = function createConnectors({ dataDir, accounts, version, vault }
       return { id: a.id, gets: !!support(t) && c.enabled && (c.scope === 'all' || c.scope.includes(a.id)), supported: !!support(t) };
     });
     const { token, tokenLocked, tokenRef, ...rest } = c;
-    return { ...rest, site: siteOf(c), hasToken: !!token || !!tokenLocked, tokenLocked: !!tokenLocked, tokenStore: tokenRef === 'keychain' ? 'keychain' : token ? 'file' : null, agents };
+    return { ...rest, site: siteOf(c), signedIn: signedIn(c), signin: oauth && signedIn(c) ? oauth.info(c.name) : null, signinFlow: oauth ? oauth.flow(c.name) : null, hasToken: !!token || !!tokenLocked, tokenLocked: !!tokenLocked, tokenStore: tokenRef === 'keychain' ? 'keychain' : token ? 'file' : null, agents };
   }
 
   return {
     list: () => LIST.map(publicConnector),
     names: () => LIST.map((c) => c.name),
     catalog: () => CATALOG.map((x) => ({ ...x, site: siteOf(x), added: LIST.some((c) => c.name === x.name || (x.url && c.url === x.url)) })),
+    get: (name) => LIST.find((c) => c.name === name) || null,
+    signOut: (name) => { if (oauth) oauth.signOut(name); const c = LIST.find((x) => x.name === name); if (c) { c.lastTest = null; save(); } },
     add, update, remove, test, signIn, searchRegistry, importable, injection, cleanup, forAgent,
     supports: (tool) => !!support(tool),
   };

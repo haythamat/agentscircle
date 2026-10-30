@@ -44,7 +44,14 @@ function run(cmd, args, cwd) {
 const vault = require('./secrets')(DATA_DIR);
 const accounts = require('./accounts')({ root: ROOT, dataDir: DATA_DIR, remote: remoteTools, vault });
 const VERSION = require('../package.json').version;
-const connectors = require('./connectors')({ dataDir: DATA_DIR, accounts, version: VERSION, vault });
+// Connector sign-in (OAuth) is done once by AgentsCircle; agents reach signed-in connectors through
+// the local proxy below, which adds the sign-in. The proxy key only works on this computer, this run.
+const PROXY_SECRET = crypto.randomBytes(24).toString('hex');
+const oauth = require('./oauth')({
+  dataDir: DATA_DIR, vault, version: VERSION, redirectUri: `http://127.0.0.1:${PORT}/oauth/callback`, openUrl,
+  onUpdate: (f) => { broadcastAll({ type: 'connector-signin', flow: f }); },
+});
+const connectors = require('./connectors')({ dataDir: DATA_DIR, accounts, version: VERSION, vault, oauth, proxy: { base: `http://127.0.0.1:${PORT}/mcp-proxy`, secret: PROXY_SECRET } });
 const broadcastConnectors = () => broadcastAll({ type: 'connectors', connectors: connectors.list() });
 const skills = require('./skills')({ dataDir: DATA_DIR, accounts });
 const worktrees = require('./worktrees')({ dataDir: DATA_DIR });
@@ -1014,6 +1021,64 @@ app.use((req, res, next) => {
   if (!okOrigin) return res.status(403).send('Forbidden');
   next();
 });
+// ---------- connector proxy ----------
+// Agents reach connectors you signed in to through here; AgentsCircle adds the sign-in and keeps it fresh.
+app.all('/mcp-proxy/:name', async (req, res) => {
+  const given = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (given.length !== PROXY_SECRET.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(PROXY_SECRET))) return res.status(401).json({ error: 'Not allowed.' });
+  const c = connectors.get(req.params.name);
+  if (!c || c.type !== 'remote' || !c.enabled) return res.status(404).json({ error: 'No such connector.' });
+  const chunks = [];
+  if (!['GET', 'HEAD', 'DELETE'].includes(req.method)) for await (const ch of req) chunks.push(ch);
+  const body = chunks.length ? Buffer.concat(chunks) : undefined;
+  const headers = { ...(c.headers || {}) };
+  for (const h of ['content-type', 'accept', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id']) if (req.headers[h]) headers[h] = req.headers[h];
+  const ctl = new AbortController();
+  res.on('close', () => ctl.abort());
+  const send = (token) => fetch(c.url, { method: req.method, headers: { ...headers, Authorization: `Bearer ${token}` }, body, signal: ctl.signal });
+  let r;
+  try {
+    let token = await oauth.accessToken(c.name);
+    if (!token) return res.status(401).json({ error: `Sign in to ${c.title || c.name} in AgentsCircle (Settings, Connectors).` });
+    r = await send(token);
+    if (r.status === 401) { token = await oauth.accessToken(c.name, { force: true }); if (token) r = await send(token); }
+    if (r.status === 401) {
+      oauth.finish(c.name, false, 'The sign-in has expired. Sign in again.');
+      broadcastConnectors();
+      return res.status(401).json({ error: `The ${c.title || c.name} sign-in has expired. Sign in again in AgentsCircle (Settings, Connectors).` });
+    }
+  } catch (e) {
+    if (ctl.signal.aborted) return;
+    return res.status(502).json({ error: `Couldn't reach ${c.title || c.name}: ${e.message}` });
+  }
+  res.status(r.status);
+  for (const h of ['content-type', 'mcp-session-id', 'cache-control', 'mcp-protocol-version']) { const v = r.headers.get(h); if (v) res.setHeader(h, v); }
+  if (!r.body) return res.end();
+  res.flushHeaders();
+  try { for await (const ch of r.body) res.write(ch); } catch { /* client or server went away */ }
+  res.end();
+});
+
+const esc = (t) => String(t).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+// The browser comes back here after you sign in to a connector.
+app.get('/oauth/callback', async (req, res) => {
+  const r = await oauth.callback(req.query || {});
+  if (r.ok) {
+    const t = await connectors.test(r.name).catch((e) => ({ ok: false, message: e.message }));
+    oauth.finish(r.name, t.ok && !t.needsSignIn, t.ok && !t.needsSignIn ? `Signed in. ${t.message} Every agent in your circles can use it.` : t.message);
+    broadcastConnectors();
+  }
+  const title = r.title || 'the connector';
+  const ok = r.ok;
+  res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AgentsCircle</title>
+<style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:#f6f7f8;color:#1b1d20}
+@media (prefers-color-scheme:dark){body{background:#121416;color:#e9ebed}.card{background:#1c1f22!important;border-color:#31363b!important}}
+.card{max-width:420px;padding:32px;border:1px solid #e3e5e8;border-radius:14px;background:#fff;text-align:center}h1{font-size:20px;margin:12px 0 6px}p{margin:0;opacity:.75}
+.dot{width:44px;height:44px;border-radius:50%;margin:0 auto;display:grid;place-items:center;color:#fff;font-size:22px;background:${ok ? '#2f9e6b' : '#d64545'}}</style>
+<div class="card"><div class="dot">${ok ? '✓' : '!'}</div><h1>${ok ? `Signed in to ${esc(title)}` : 'Sign-in didn\'t finish'}</h1><p>${ok ? 'You can close this tab and go back to AgentsCircle.' : esc(r.message || '')}</p></div>
+${ok ? '<script>setTimeout(()=>window.close(),1500)</script>' : ''}`);
+});
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(ROOT, 'public')));
 // The terminal's on-page part (xterm.js), served from its npm package.
@@ -1204,6 +1269,14 @@ app.delete('/api/connectors/:name', (req, res) => {
 });
 app.post('/api/connectors/:name/test', async (req, res) => {
   try { const r = await connectors.test(req.params.name); broadcastConnectors(); res.json(r); } catch (e) { cerr(res, e); }
+});
+app.post('/api/connectors/:name/oauth', async (req, res) => {
+  const c = connectors.get(req.params.name);
+  if (!c) return res.status(404).json({ error: 'No such connector.' });
+  try { const f = await oauth.start(c); if (f.state === 'done') broadcastConnectors(); res.json(f); } catch (e) { cerr(res, e); }
+});
+app.post('/api/connectors/:name/signout', (req, res) => {
+  try { connectors.signOut(req.params.name); broadcastConnectors(); res.json({ ok: true }); } catch (e) { cerr(res, e); }
 });
 app.post('/api/connectors/:name/signin', (req, res) => {
   const agent = agentById((req.body || {}).agent);

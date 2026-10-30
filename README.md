@@ -55,6 +55,10 @@ Sessions are saved in `~/.agentscircle/sessions`.
 - **Resizable panel:** drag the panel's edge to make it wider (or taller when it sits below the chat). Double-click the edge or use the expand button to give it as much room as the chat allows; click again to go back. The size is remembered.
 - **Edit files in the panel:** open a file from the Files tab, a file chip or an attachment, and use **Edit**. It has line numbers, Tab and Shift+Tab indenting, and keeps your indentation on new lines. Save with ⌘S (Ctrl+S). Unsaved edits stay while you move around the panel. If an agent changed the file after you opened it, AgentsCircle asks before overwriting. Every save adds a note to the chat, so the next agent knows you changed the file.
 
+## One sign-in for connectors (v1.3.8)
+
+Click **Sign in** on a connector (Settings, Connectors) and approve access in your browser. That one sign-in works for every agent: AgentsCircle keeps it, refreshes it, and hands each agent a local link that only works on your computer while AgentsCircle runs. Adding a connector that needs sign-in starts the sign-in right away. **Sign out** removes it.
+
 ## Terminal, copy buttons and commits (v1.3.7)
 
 - **Terminal in the session.** The panel's **Terminal** tab (or Ctrl + backtick, or **Open terminal** in the session menu) opens your shell in the session's folder. It keeps running when you switch tabs or sessions, and redraws when you come back. ⌘K clears it; the bar has Restart and End.
@@ -181,7 +185,7 @@ Worktrees live in `~/.agentscircle/worktrees/`. Ignored folders such as `node_mo
 - **From my agents:** import connectors you already set up in Claude Code, Codex or Cursor, so the other agents get them too.
 - **Custom:** a remote URL (with sign-in, a token, or none) or a command that runs on your computer.
 
-Each connector has **Test** (checks it answers and lists its tools), an on/off switch, and a choice of which agents get it. Connectors that use sign-in (OAuth) need one sign-in per agent: click **Sign in**, pick the agent, and finish in the browser.
+Each connector has **Test** (checks it answers and lists its tools), an on/off switch, and a choice of which agents get it. Connectors that use sign-in (OAuth) need one sign-in for all agents (v1.3.8): click **Sign in**, approve access in your browser, and you're done. AgentsCircle keeps the sign-in (in your keychain when it can) and refreshes it; agents reach the connector through AgentsCircle on your computer, so Claude Code, Codex, Cursor and OpenCode all use it without signing in themselves, and no Terminal opens.
 
 How it reaches each agent, without editing their own settings:
 - **Claude Code:** an extra `--mcp-config` file per run, and the shared connectors' tools are pre-approved (runs here can't show "allow?" prompts). Tokens are passed through environment variables, not written to the file.

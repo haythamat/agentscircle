@@ -591,6 +591,7 @@ function connect() {
     const ev = JSON.parse(e.data);
     if (ev.type && ev.type.startsWith('term:')) { if (typeof onTermEvent === 'function') onTermEvent(ev); return; }
     if (ev.type === 'signin') { if (typeof onSigninEvent === 'function') onSigninEvent(ev.flow); return; }
+    if (ev.type === 'connector-signin') { if (typeof onConnectorSignin === 'function') onConnectorSignin(ev.flow); return; }
     if (ev.type === 'sessions') { if (ev.deleted && current && current.id === ev.deleted) leaveSession(); loadSessions(); return; }
     if (typeof handleAttentionEvent === 'function' && handleAttentionEvent(ev)) return;
     if (ev.type === 'members' && current) { current.members = ev.members; renderChips(); renderStatus(); return; }
