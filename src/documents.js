@@ -8,6 +8,7 @@ const path = require('path');
 const ext = (p) => path.extname(p).slice(1).toLowerCase();
 const SHEET_EXT = new Set(['xlsx', 'xlsm', 'csv', 'tsv']);
 const DOC_EXT = new Set(['docx']);
+const SLIDE_EXT = new Set(['pptx']);
 const MAX_ROWS = 500, MAX_COLS = 60;
 
 const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -184,6 +185,110 @@ async function htmlToPdf(html, baseDir) {
   } finally { fs.rm(tmp, { force: true }, () => {}); }
 }
 
+// ---------- PowerPoint preview ----------
+// Draws each slide from its XML: text boxes, pictures, tables and filled shapes at their positions,
+// scaled from the slide's own size. Good for checking what an agent made; not every effect is drawn.
+const EMU = 12700; // EMUs per point
+function pptxHtml(file) {
+  const AdmZip = require('adm-zip');
+  const zip = new AdmZip(file);
+  const read = (n) => { const e = zip.getEntry(n); return e ? e.getData().toString('utf8') : null; };
+  const pres = read('ppt/presentation.xml') || '';
+  const sz = /<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"/.exec(pres);
+  const W = sz ? +sz[1] : 12192000, H = sz ? +sz[2] : 6858000;
+  const presRels = read('ppt/_rels/presentation.xml.rels') || '';
+  const relMap = (xml) => { const m = {}; for (const r of xml.matchAll(/<Relationship [^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g)) m[r[1]] = r[2]; for (const r of xml.matchAll(/<Relationship [^>]*Target="([^"]+)"[^>]*Id="([^"]+)"/g)) m[r[2]] = r[1]; return m; };
+  const pr = relMap(presRels);
+  const order = [...pres.matchAll(/<p:sldId [^>]*r:id="([^"]+)"/g)].map((m) => 'ppt/' + pr[m[1]].replace(/^\/?ppt\//, '').replace(/^\//, ''));
+  const slides = order.length ? order : zip.getEntries().map((e) => e.entryName).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
+  const unesc = (t) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const color = (x) => { const m = /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(x || ''); return m ? '#' + m[1] : null; };
+  const pos = (x) => {
+    const off = /<a:off x="(-?\d+)" y="(-?\d+)"/.exec(x), ext = /<a:ext cx="(\d+)" cy="(\d+)"/.exec(x);
+    return off && ext ? { x: +off[1], y: +off[2], w: +ext[1], h: +ext[2] } : null;
+  };
+  const box = (p) => `left:${(p.x / W * 100).toFixed(3)}%;top:${(p.y / H * 100).toFixed(3)}%;width:${(p.w / W * 100).toFixed(3)}%;height:${(p.h / H * 100).toFixed(3)}%`;
+  const ptSize = (pt) => `${(pt / (W / EMU) * 100).toFixed(3)}cqw`;
+  // Placeholders (title, subtitle, body) usually take their place and size from the slide layout.
+  const layoutCache = new Map();
+  const placeholders = (file) => {
+    if (layoutCache.has(file)) return layoutCache.get(file);
+    const xml = read(file) || '', map = {};
+    for (const sp of xml.match(/<p:sp>[\s\S]*?<\/p:sp>/g) || []) {
+      const ph = /<p:ph([^>]*)\/?>/.exec(sp); const p = pos(sp);
+      if (!ph || !p) continue;
+      const type = (/type="(\w+)"/.exec(ph[1]) || [, 'body'])[1], idx = (/idx="(\d+)"/.exec(ph[1]) || [])[1];
+      map[`t:${type}`] = map[`t:${type}`] || p; if (idx) map[`i:${idx}`] = p;
+    }
+    const rels = relMap(read(file.replace(/([^/]+\.xml)$/, '_rels/$1.rels')) || '');
+    const master = Object.values(rels).find((t) => /slideMaster/.test(t));
+    if (master) { const m = placeholders(path.posix.normalize(path.posix.join(path.posix.dirname(file), master))); for (const k in m) if (!map[k]) map[k] = m[k]; }
+    layoutCache.set(file, map);
+    return map;
+  };
+  const DEFAULT_PT = { title: 40, ctrTitle: 48, subTitle: 24, body: 20 };
+  const paras = (txBody, basePt = 18) => (txBody.match(/<a:p>[\s\S]*?<\/a:p>|<a:p\/>/g) || []).map((para) => {
+    const algn = /<a:pPr[^>]*algn="(\w+)"/.exec(para);
+    const bullet = /<a:buChar/.test(para) || /<a:buAutoNum/.test(para);
+    const runs = (para.match(/<a:r>[\s\S]*?<\/a:r>/g) || []).map((r) => {
+      const rp = /<a:rPr([^>]*)\/?>([\s\S]*?<\/a:rPr>)?/.exec(r) || ['', '', ''];
+      const size = /sz="(\d+)"/.exec(rp[1]); const b = /\bb="1"/.test(rp[1]); const it = /\bi="1"/.test(rp[1]); const c = color(rp[2]);
+      const t = unesc((/<a:t>([\s\S]*?)<\/a:t>/.exec(r) || ['', ''])[1]);
+      return `<span style="font-size:${ptSize(size ? +size[1] / 100 : basePt)};${b ? 'font-weight:700;' : ''}${it ? 'font-style:italic;' : ''}${c ? `color:${c};` : ''}">${escHtml(t)}</span>`;
+    }).join('');
+    const a = algn ? { ctr: 'center', r: 'right', just: 'justify' }[algn[1]] : null;
+    return runs ? `<p style="margin:0 0 .3em;${a ? `text-align:${a};` : ''}">${bullet ? '• ' : ''}${runs}</p>` : '<p style="margin:0;min-height:.6em"></p>';
+  }).join('');
+  const out = [];
+  slides.forEach((slidePath, i) => {
+    const xml = read(slidePath); if (!xml) return;
+    const rels = relMap(read(slidePath.replace(/slides\/(slide\d+\.xml)$/, 'slides/_rels/$1.rels')) || '');
+    const layoutRel = Object.values(rels).find((t) => /slideLayout/.test(t));
+    const phs = layoutRel ? placeholders(path.posix.normalize(path.posix.join(path.posix.dirname(slidePath), layoutRel))) : {};
+    const bg = color((/<p:bg>[\s\S]*?<\/p:bg>/.exec(xml) || [''])[0]) || '#ffffff';
+    const parts = [];
+    for (const sp of xml.match(/<p:sp>[\s\S]*?<\/p:sp>/g) || []) {
+      const ph = /<p:ph([^>]*)\/?>/.exec(sp);
+      const phType = ph ? (/type="(\w+)"/.exec(ph[1]) || [, 'body'])[1] : null, phIdx = ph ? (/idx="(\d+)"/.exec(ph[1]) || [])[1] : null;
+      const p = pos(sp) || (ph ? phs[`i:${phIdx}`] || phs[`t:${phType}`] || (phType === 'ctrTitle' ? phs['t:title'] : phType === 'subTitle' ? phs['t:body'] : null) : null);
+      if (!p) continue;
+      const basePt = DEFAULT_PT[phType] || 18;
+      const titleish = phType === 'title' || phType === 'ctrTitle';
+      const spPr = (/<p:spPr[\s\S]*?<\/p:spPr>/.exec(sp) || [''])[0];
+      const fill = /<a:noFill\/>/.test(spPr.split('<a:ln')[0]) ? null : color(spPr.split('<a:ln')[0]);
+      const line = color((/<a:ln[\s\S]*?<\/a:ln>/.exec(spPr) || [''])[0]);
+      const round = /prst="(roundRect|ellipse)"/.exec(spPr);
+      const tx = (/<p:txBody>[\s\S]*?<\/p:txBody>/.exec(sp) || [''])[0];
+      const anchor = /anchor="(ctr|b)"/.exec(tx);
+      parts.push(`<div class="sh" style="${box(p)};${fill ? `background:${fill};` : ''}${line ? `border:1px solid ${line};` : ''}${round ? `border-radius:${round[1] === 'ellipse' ? '50%' : '8%'};` : ''}justify-content:${anchor ? (anchor[1] === 'ctr' ? 'center' : 'flex-end') : titleish ? 'center' : 'flex-start'};${phType === 'ctrTitle' || phType === 'subTitle' ? 'text-align:center;' : ''}${titleish ? 'font-weight:600;' : ''}">${tx ? paras(tx, basePt) : ''}</div>`);
+    }
+    for (const pic of xml.match(/<p:pic>[\s\S]*?<\/p:pic>/g) || []) {
+      const p = pos(pic); const id = (/r:embed="([^"]+)"/.exec(pic) || [])[1]; if (!p || !id || !rels[id]) continue;
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(slidePath), rels[id]));
+      const e = zip.getEntry(target); if (!e || e.header.size > 6 * 1024 * 1024) continue;
+      const ext = path.extname(target).slice(1).toLowerCase();
+      const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp', bmp: 'image/bmp' }[ext];
+      if (mime) parts.push(`<img class="sh" style="${box(p)};object-fit:contain" src="data:${mime};base64,${e.getData().toString('base64')}" alt="">`);
+    }
+    for (const gf of xml.match(/<p:graphicFrame>[\s\S]*?<\/p:graphicFrame>/g) || []) {
+      const p = pos((/<p:xfrm>[\s\S]*?<\/p:xfrm>/.exec(gf) || [''])[0]); if (!p) continue;
+      if (/<a:tbl>/.test(gf)) {
+        const rows = (gf.match(/<a:tr[\s\S]*?<\/a:tr>/g) || []).map((tr) => `<tr>${(tr.match(/<a:tc[\s\S]*?<\/a:tc>/g) || []).map((tc) => `<td>${paras(tc, 18)}</td>`).join('')}</tr>`).join('');
+        parts.push(`<div class="sh" style="${box(p)}"><table>${rows}</table></div>`);
+      } else if (/chart/.test(gf)) parts.push(`<div class="sh ph" style="${box(p)}">Chart</div>`);
+    }
+    out.push(`<section class="slide" style="aspect-ratio:${W}/${H};background:${bg}"><span class="num">${i + 1}</span>${parts.join('')}</section>`);
+  });
+  return `<!doctype html><meta charset="utf-8"><style>
+body{margin:0;padding:16px;background:#e9ebee;font-family:Calibri,Carlito,-apple-system,"Segoe UI",system-ui,sans-serif}
+.slide{position:relative;container-type:inline-size;width:100%;max-width:1100px;margin:0 auto 16px;box-shadow:0 1px 4px rgba(0,0,0,.18);overflow:hidden;color:#222}
+.sh{position:absolute;display:flex;flex-direction:column;box-sizing:border-box;padding:.6cqw .9cqw;overflow:hidden;font-size:1.5cqw;line-height:1.2}
+img.sh{padding:0}.ph{align-items:center;justify-content:center;background:#f3f4f6;color:#888;border:1px dashed #ccc}
+.num{position:absolute;right:8px;bottom:6px;font:11px system-ui;color:#999;z-index:2}
+table{border-collapse:collapse;width:100%;height:100%}td{border:1px solid #ccc;padding:.4cqw .6cqw;vertical-align:top}
+@page{size:${(W / 914400).toFixed(3)}in ${(H / 914400).toFixed(3)}in;margin:0}@media print{body{background:#fff;padding:0}.slide{box-shadow:none;margin:0;max-width:none;width:100vw;height:100vh;aspect-ratio:auto;break-after:page}.num{display:none}}</style>${out.join('') || '<p>No slides found.</p>'}`;
+}
+
 // ---------- the public part ----------
 function uniqueOut(file, newExt) {
   const dir = path.dirname(file), base = path.basename(file, path.extname(file));
@@ -203,6 +308,7 @@ function exportOptions(file) {
   if (e === 'csv' || e === 'tsv') return ['xlsx'];
   if (e === 'xlsx' || e === 'xlsm') return ['csv', 'pdf'];
   if (e === 'docx') return ['pdf', 'html'];
+  if (e === 'pptx') return ['pdf'];
   if (e === 'txt') return ['docx', 'pdf'];
   return [];
 }
@@ -218,6 +324,7 @@ async function exportFile(file, to, target) {
     if (e === 'txt') return htmlPage(title, `<pre style="white-space:pre-wrap;background:none;padding:0">${escHtml(fs.readFileSync(file, 'utf8'))}</pre>`);
     if (e === 'html' || e === 'htm') return fs.readFileSync(file, 'utf8');
     if (e === 'docx') { const r = await require('mammoth').convertToHtml({ path: file }); return htmlPage(title, r.value); }
+    if (e === 'pptx') return pptxHtml(file);
     if (e === 'xlsx' || e === 'xlsm') { const sheets = await readSheets(file); return htmlPage(title, sheets.map((s) => `<h2>${escHtml(s.name)}</h2><table>${s.rows.map((r, i) => `<tr>${r.map((c) => (i ? `<td>${escHtml(c)}</td>` : `<th>${escHtml(c)}</th>`)).join('')}</tr>`).join('')}</table>`).join('')); }
     throw new Error('No HTML version of this file.');
   };
@@ -247,6 +354,7 @@ async function preview(file) {
     return { docHtml: r.value };
   }
   if (SHEET_EXT.has(e)) return { sheets: await readSheets(file) };
+  if (SLIDE_EXT.has(e)) return { slidesHtml: pptxHtml(file) };
   return {};
 }
 

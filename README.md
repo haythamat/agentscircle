@@ -59,7 +59,7 @@ Sessions are saved in `~/.agentscircle/sessions`.
 
 - **Push to GitHub.** The Files tab shows how many commits are waiting and has **Push** (and **Pull** when GitHub has newer commits). A folder that isn't on GitHub yet gets **Put on GitHub**: it creates a private (or public) repository on your account and pushes. Agents can push too, with the **push** circle tool. **Sign in to GitHub** happens in the app: it shows a one-time code and opens GitHub, no Terminal (it installs the GitHub CLI first if needed).
 - **Every file an agent makes shows in Files**, including in folders without git and files git ignores.
-- **Previews** for Word (.docx), Excel (.xlsx) and CSV files, next to HTML, Markdown, PDF and images.
+- **Previews** for Word (.docx), Excel (.xlsx), CSV and PowerPoint (.pptx) files, video (.mp4, .webm, .mov) and audio (.mp3, .wav, .m4a…), next to HTML, Markdown, PDF and images. PowerPoint decks export to PDF at the slide size. (PowerPoint, video and audio: v1.3.11)
 - **Export** a file from the panel: Markdown to Word, PDF, HTML or Excel (its tables); HTML to PDF or Excel; CSV to Excel; Excel to CSV or PDF; Word to PDF or HTML. In the app you pick where to save it (it starts in the file's folder); PDFs are tagged for screen readers. (v1.3.10)
 - **Open in** your editor: the file view's open button lists its default app, Finder / Explorer, and the code editors you have (VS Code, Cursor, Windsurf, Zed, Sublime Text, WebStorm, Xcode), and opens the file there. (v1.3.10)
 - **Better formats from agents.** Agents are told to make charts and comparisons as interactive HTML pages, data as Excel sheets, and documents as Word files, and to keep Markdown for notes.

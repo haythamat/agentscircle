@@ -1980,6 +1980,9 @@ function kindOf(p) {
   if (IMG_EXT.has(e)) return 'image';
   if (e === 'pdf') return 'pdf';
   if (e === 'docx') return 'doc';
+  if (e === 'pptx') return 'slides';
+  if (['mp4', 'm4v', 'webm', 'mov', 'ogv'].includes(e)) return 'video';
+  if (['mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'flac', 'opus'].includes(e)) return 'audio';
   if (e === 'xlsx' || e === 'xlsm') return 'sheet';
   if (TEXT_EXT.has(e)) return 'text';
   return 'other';
@@ -2114,7 +2117,7 @@ app.get('/api/sessions/:id/file', async (req, res) => {
     out.content = buf.slice(0, 512 * 1024).toString('utf8');
   }
   out.exports = documents.exportOptions(full);
-  if ((kind === 'doc' || kind === 'sheet' || documents.canPreviewTable(full)) && st.size < 20 * 1024 * 1024) {
+  if ((kind === 'doc' || kind === 'sheet' || kind === 'slides' || documents.canPreviewTable(full)) && st.size < 20 * 1024 * 1024) {
     try { Object.assign(out, await documents.preview(full)); } catch (e) { out.previewError = `Couldn't read this file: ${e.message}`; }
   }
   res.json(out);

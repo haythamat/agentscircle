@@ -9,7 +9,7 @@ const fmtSize = (b) => b == null ? '' : b < 1024 ? `${b} B` : b < 1048576 ? `${(
 const baseName = (p) => p.split('/').pop();
 const dirName = (p) => p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '';
 const agentColor = (id) => (agentMap()[id] || {}).color || 'var(--muted)';
-const KIND_ICON = { html: 'globe', markdown: 'fileText', image: 'image', pdf: 'file', text: 'fileCode', doc: 'fileText', sheet: 'layout', other: 'file' };
+const KIND_ICON = { html: 'globe', markdown: 'fileText', image: 'image', pdf: 'file', text: 'fileCode', doc: 'fileText', sheet: 'layout', slides: 'monitor', video: 'play', audio: 'play', other: 'file' };
 const STATUS_LABEL = { added: 'New', modified: 'Edited', deleted: 'Deleted' };
 
 function turns() { return (current ? current.messages : []).filter((m) => m.role === 'agent'); }
@@ -263,7 +263,7 @@ $('panelBody').addEventListener('click', async (e) => {
   if (row) openFile(row.dataset.open, row.dataset.wt || null);
 });
 
-const hasPreview = (info) => ['html', 'image', 'markdown', 'pdf', 'doc', 'sheet'].includes(info.kind) || !!info.sheets;
+const hasPreview = (info) => ['html', 'image', 'markdown', 'pdf', 'doc', 'sheet', 'slides', 'video', 'audio'].includes(info.kind) || !!info.sheets;
 const EXPORT_LABEL = { docx: ['Word document', '.docx'], pdf: ['PDF', '.pdf'], html: ['Web page', '.html'], xlsx: ['Excel spreadsheet', '.xlsx'], csv: ['CSV', '.csv'] };
 function sheetHtml(info) {
   const sheets = info.sheets || [];
@@ -434,6 +434,9 @@ async function renderFile() {
   else if (panel.view === 'preview' && info.kind === 'image') view = `<div class="imgwrap"><img src="${raw}?t=${Date.now()}" alt="${esc(baseName(p))}"></div>`;
   else if (panel.view === 'preview' && info.previewError) view = `<div class="pcard"><div class="err" style="margin:0">${esc(info.previewError)}</div></div>`;
   else if (panel.view === 'preview' && info.kind === 'doc') view = docFrame(info.docHtml || '');
+  else if (panel.view === 'preview' && info.kind === 'slides') view = `<iframe class="preview slidepreview" sandbox="" srcdoc="${esc(info.slidesHtml || '')}"></iframe>`;
+  else if (panel.view === 'preview' && info.kind === 'video') view = `<div class="mediawrap"><video controls playsinline preload="metadata" src="${raw}?t=${Date.now()}"></video></div><div class="hint">If it doesn't play, the video's format isn't supported here. Use Open to play it in its app.</div>`;
+  else if (panel.view === 'preview' && info.kind === 'audio') view = `<div class="mediawrap audio">${ic('play')}<div style="min-width:0;flex:1"><div class="fname">${esc(baseName(p))}</div><audio controls preload="metadata" src="${raw}?t=${Date.now()}" style="width:100%;margin-top:8px"></audio></div></div>`;
   else if (panel.view === 'preview' && info.sheets) view = sheetHtml(info);
   else if (panel.view === 'preview' && info.kind === 'markdown') view = `<div class="mdview body">${md(dirty ? panel.drafts.get(draftKey()).text : info.content || '')}</div>`;
   else if (panel.view === 'edit') view = editorHtml();
