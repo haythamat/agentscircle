@@ -2127,14 +2127,40 @@ app.post('/api/sessions/:id/export', async (req, res) => {
   const b = req.body || {};
   const full = safePath(s, b.path, b.wt);
   if (!full || !fs.existsSync(full)) return res.status(400).json({ error: 'That file isn\'t in the project folder.' });
+  const to = String(b.to || '');
   try {
-    const out = await documents.exportFile(full, String(b.to || ''));
-    const dir = path.posix.dirname(String(b.path).replace(/\\/g, '/'));
-    const rel = (dir === '.' ? '' : dir + '/') + path.basename(out);
-    addMessage(s, { role: 'system', kind: 'export', ...(b.wt ? { workdir: true, agent: b.wt } : {}), files: [{ path: rel, status: 'added' }], text: `You exported ${b.path} as ${path.basename(out)}.` });
-    res.json({ path: rel, name: path.basename(out) });
+    // In the desktop app you choose where it goes (starting in the file's own folder), like Claude
+    // and other apps do. Elsewhere it's saved next to the original.
+    let target = null;
+    let electron = null; try { electron = require('electron'); } catch { /* not in the app */ }
+    if (b.ask !== false && electron && electron.dialog && typeof electron.dialog.showSaveDialog === 'function') {
+      const LABEL = { docx: 'Word document', pdf: 'PDF', html: 'Web page', xlsx: 'Excel workbook', csv: 'CSV' };
+      const win = electron.BrowserWindow.getFocusedWindow();
+      const opts = { defaultPath: documents.suggestPath(full, to), filters: [{ name: LABEL[to] || to.toUpperCase(), extensions: [to] }] };
+      const r = await (win ? electron.dialog.showSaveDialog(win, opts) : electron.dialog.showSaveDialog(opts));
+      if (r.canceled || !r.filePath) return res.json({ canceled: true });
+      target = path.extname(r.filePath).toLowerCase() === `.${to}` ? r.filePath : `${r.filePath}.${to}`;
+    }
+    const out = await documents.exportFile(full, to, target);
+    // Saved inside the project: it joins the session's files.
+    const depth = String(b.path).replace(/\\/g, '/').split('/').filter(Boolean).length;
+    const base = b.wt ? path.resolve(full, ...Array(depth).fill('..')) : s.folder;
+    const rel = path.relative(base, out).split(path.sep).join('/');
+    const inside = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+    addMessage(s, { role: 'system', kind: 'export', ...(inside ? { files: [{ path: rel, status: 'added' }] } : {}), ...(inside && b.wt ? { workdir: true, agent: b.wt } : {}), text: `You exported ${b.path} as ${inside ? rel : out}.` });
+    if (!inside) exportedOutside.add(out);
+    res.json({ path: inside ? rel : null, full: out, name: path.basename(out), inside });
   } catch (e) { res.status(400).json({ error: e.message, code: e.code }); }
 });
+app.post('/api/reveal-path', (req, res) => {
+  // Show a file you just exported outside the project (only paths this app wrote this session).
+  const p = String((req.body || {}).path || '');
+  if (!exportedOutside.has(p)) return res.status(400).json({ error: 'Unknown file.' });
+  let shell = null; try { shell = require('electron').shell; } catch { /* not in the app */ }
+  if (shell && shell.showItemInFolder) shell.showItemInFolder(p);
+  res.json({ ok: true });
+});
+const exportedOutside = new Set();
 
 // Save your own edit to a file from the panel's editor.
 const EDITABLE = new Set(['text', 'markdown', 'html']);
@@ -2207,6 +2233,18 @@ app.post('/api/sessions/:id/reveal', (req, res) => {
     : ['xdg-open', [path.dirname(target)]];
   try { const c = spawn(cmd[0], cmd[1], { detached: true, stdio: 'ignore' }); c.on('error', () => {}); c.unref(); } catch { /* ok */ }
   res.json({ ok: true });
+});
+
+// "Open in" your code editor (VS Code, Cursor, Windsurf, Zed…).
+const editors = require('./editors');
+app.get('/api/editors', (_req, res) => res.json(editors.installed().map(({ id, name }) => ({ id, name }))));
+app.post('/api/sessions/:id/open-in', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const b = req.body || {};
+  const full = safePath(s, b.path || '.', b.wt);
+  if (!full) return res.status(400).json({ error: 'That file is outside the project folder.' });
+  const folder = b.wt ? path.dirname(full) : s.folder;
+  try { res.json(editors.open(String(b.editor || ''), full, { line: Number(b.line) || null, folder })); } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.get('/api/sessions/:id/export', (req, res) => {

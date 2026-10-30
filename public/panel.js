@@ -283,12 +283,28 @@ function exportMenuHtml(info) {
   if (!ex.length) return '';
   return `<div class="exwrap"><button data-exportmenu aria-haspopup="menu">${ic('export', 'sm')}Export${ic('chevronDown', 'sm')}</button><div class="cmenu exmenu" role="menu">${ex.map((t) => `<button role="menuitem" data-exportto="${t}"><span>${EXPORT_LABEL[t][0]}</span><span class="hint" style="margin:0">${EXPORT_LABEL[t][1]}</span></button>`).join('')}</div></div>`;
 }
+// "Open in": the file's own app, Finder / Explorer, or a code editor (at the file).
+let editorList = null;
+async function fillOpenMenu(menu) {
+  if (!editorList) { try { editorList = await api('/api/editors'); } catch { editorList = []; } }
+  const fm = /Mac/.test(navigator.platform) ? 'Finder' : /Win/.test(navigator.platform) ? 'File Explorer' : 'Files';
+  menu.innerHTML = `<button role="menuitem" data-openwith="app"><span>Its default app</span></button><button role="menuitem" data-openwith="reveal"><span>Show in ${fm}</span></button>${editorList.length ? '<div class="msep"></div>' + editorList.map((e) => `<button role="menuitem" data-openwith="${esc(e.id)}"><span>${esc(e.name)}</span></button>`).join('') : ''}`;
+  menu.querySelectorAll('[data-openwith]').forEach((b) => b.onclick = async () => {
+    menu.parentElement.classList.remove('open');
+    const w = b.dataset.openwith, body = { path: panel.file, wt: panel.wt };
+    try {
+      if (w === 'app' || w === 'reveal') await api(`/api/sessions/${current.id}/reveal`, { method: 'POST', body: { ...body, open: w === 'app' } });
+      else await api(`/api/sessions/${current.id}/open-in`, { method: 'POST', body: { ...body, editor: w } });
+    } catch (e) { alert(e.message); }
+  });
+}
 async function exportCurrent(to, btn) {
   const p = panel.file;
   if (btn) { btn.disabled = true; btn.innerHTML = `${ic('export', 'sm')}Exporting…`; }
   try {
     const r = await api(`/api/sessions/${current.id}/export`, { method: 'POST', body: { path: p, to, wt: panel.wt } });
-    panel.exported = { path: r.path, name: r.name };
+    if (r.canceled) { renderFile(); return; }
+    panel.exported = { path: r.path, name: r.name, full: r.full, inside: r.inside };
   } catch (e) {
     panel.exported = { error: e.message, code: e.code };
   }
@@ -435,10 +451,10 @@ async function renderFile() {
   body.classList.toggle('editing', panel.view === 'edit');
   body.innerHTML = `<div class="fhead"><button class="ghost ib" id="fBack" data-tip="All files">${ic('back')}</button><div class="fmain"><div class="fname">${esc(baseName(p))}</div><div class="hint" style="margin:0">${panel.wt ? `on @${esc(panel.wt)}'s branch · ` : ''}${dirName(p) ? esc(dirName(p)) + ' · ' : ''}${info.exists ? fmtSize(info.size) : ''}</div></div></div>
     <div class="ftabs">${canPreview ? `<button data-v="preview" class="${panel.view === 'preview' ? 'on' : ''}">Preview</button>` : ''}<button data-v="changes" class="${panel.view === 'changes' ? 'on' : ''}">Changes</button>${canEdit ? `<button data-v="edit" class="${panel.view === 'edit' ? 'on' : ''}${dirty ? ' dirty' : ''}">${ic('pencil', 'sm')}Edit</button>` : info.content != null ? `<button data-v="source" class="${panel.view === 'source' ? 'on' : ''}">Source</button>` : ''}
-      <span style="flex:1"></span>${info.exists ? exportMenuHtml(info) : ''}<button class="ghost ib" data-act="reveal" data-tip="Show in Finder / Explorer" aria-label="Show in Finder">${ic('folder', 'sm')}</button><button class="ghost ib" data-act="open" data-tip="Open in its app" aria-label="Open in its app">${ic('external', 'sm')}</button></div>
+      <span style="flex:1"></span>${info.exists ? exportMenuHtml(info) : ''}<div class="exwrap"><button class="ghost ib" data-openmenu data-tip="Open in…" aria-label="Open in" aria-haspopup="menu">${ic('external', 'sm')}</button><div class="cmenu exmenu" role="menu"></div></div></div>
     ${panel.exported ? (panel.exported.error
       ? `<div class="exnote err">${esc(panel.exported.error)}${panel.exported.code === 'nopdf' ? ` <a href="${raw}" target="_blank" rel="noopener">Open it to print</a>` : ''}<button class="ghost ib sm" data-exclose aria-label="Dismiss">${ic('x', 'sm')}</button></div>`
-      : `<div class="exnote">${ic('check', 'sm')}<span>Saved <b>${esc(panel.exported.name)}</b> next to it.</span><span style="flex:1"></span><button class="linkbtn" data-exshow="${esc(panel.exported.path)}">Show</button><button class="linkbtn" data-exopen="${esc(panel.exported.path)}">Open</button><button class="ghost ib sm" data-exclose aria-label="Dismiss">${ic('x', 'sm')}</button></div>`) : ''}
+      : `<div class="exnote">${ic('check', 'sm')}<span>Saved <b>${esc(panel.exported.name)}</b>${panel.exported.inside ? '' : ' outside the project'}.</span><span style="flex:1"></span>${panel.exported.inside ? `<button class="linkbtn" data-exshow="${esc(panel.exported.path)}">Show</button><button class="linkbtn" data-exopen="${esc(panel.exported.path)}">Open</button>` : `<button class="linkbtn" data-exreveal="${esc(panel.exported.full)}">Show in folder</button>`}<button class="ghost ib sm" data-exclose aria-label="Dismiss">${ic('x', 'sm')}</button></div>`) : ''}
     <div id="fileView">${view}</div>
     ${panel.view === 'edit' ? '' : `<div class="psec">History</div>${touches.slice().reverse().map((m) => { const f = m.files.find((x) => x.path === p); return `<div class="trow" data-goto="${m.id}"><span class="sdot ${f.status === 'deleted' ? 'error' : 'done'}"></span><div class="tmain"><b style="color:${agentColor(m.agent)}">@${esc(m.agent)}</b> <span class="hint" style="margin:0">${esc(STATUS_LABEL[f.status].toLowerCase())} · ${new Date(m.endedAt || m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span><div class="hint" style="margin:2px 0 0">${esc(requestFor(m))}</div></div></div>`; }).join('') || '<div class="hint">No agent has changed this file in this session.</div>'}`}`;
   if (panel.view === 'edit') mountEditor();
@@ -451,6 +467,9 @@ async function renderFile() {
   document.querySelectorAll('[data-exportto]').forEach((b) => b.onclick = () => { b.closest('.exwrap').classList.remove('open'); exportCurrent(b.dataset.exportto, em); });
   document.querySelectorAll('[data-exclose]').forEach((b) => b.onclick = () => { panel.exported = null; renderFile(); });
   document.querySelectorAll('[data-exshow]').forEach((b) => b.onclick = () => openFile(b.dataset.exshow, panel.wt));
+  document.querySelectorAll('[data-exreveal]').forEach((b) => b.onclick = () => api('/api/reveal-path', { method: 'POST', body: { path: b.dataset.exreveal } }).catch(() => {}));
+  const om = document.querySelector('[data-openmenu]');
+  if (om) om.onclick = async (ev) => { ev.stopPropagation(); const w = om.parentElement; if (!w.classList.contains('open')) await fillOpenMenu(w.querySelector('.exmenu')); w.classList.toggle('open'); };
   document.querySelectorAll('[data-exopen]').forEach((b) => b.onclick = () => api(`/api/sessions/${current.id}/reveal`, { method: 'POST', body: { path: b.dataset.exopen, open: true, wt: panel.wt } }));
 }
 document.addEventListener('click', (e) => { if (!e.target.closest('.exwrap')) document.querySelectorAll('.exwrap.open').forEach((w) => w.classList.remove('open')); });

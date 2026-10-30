@@ -175,7 +175,7 @@ async function htmlToPdf(html, baseDir) {
       try {
         await win.loadURL(url);
         await new Promise((r) => setTimeout(r, 600)); // charts and fonts settle
-        return await win.webContents.printToPDF({ printBackground: true, pageSize: 'A4', margins: { marginType: 'default' } });
+        return await win.webContents.printToPDF({ printBackground: true, generateTaggedPDF: true, preferCSSPageSize: true, pageSize: 'A4', margins: { marginType: 'default' } });
       } catch (e) {
         if (attempt >= 2) throw e;
         await new Promise((r) => setTimeout(r, 300));
@@ -207,10 +207,10 @@ function exportOptions(file) {
   return [];
 }
 
-async function exportFile(file, to) {
+async function exportFile(file, to, target) {
   const e = ext(file), title = path.basename(file, path.extname(file));
   if (!exportOptions(file).includes(to)) throw new Error(`Can't turn a .${e} file into .${to}.`);
-  const out = uniqueOut(file, to);
+  const out = target || uniqueOut(file, to);
   const dir = path.dirname(file);
   let buf;
   const asHtml = async () => {
@@ -250,4 +250,4 @@ async function preview(file) {
   return {};
 }
 
-module.exports = { exportOptions, exportFile, preview, isDoc: (p) => DOC_EXT.has(ext(p)), isSheet: (p) => SHEET_EXT.has(ext(p)) && !['csv', 'tsv'].includes(ext(p)), canPreviewTable: (p) => SHEET_EXT.has(ext(p)) };
+module.exports = { exportOptions, exportFile, suggestPath: uniqueOut, preview, isDoc: (p) => DOC_EXT.has(ext(p)), isSheet: (p) => SHEET_EXT.has(ext(p)) && !['csv', 'tsv'].includes(ext(p)), canPreviewTable: (p) => SHEET_EXT.has(ext(p)) };
