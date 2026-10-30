@@ -244,10 +244,17 @@ function buildPrompt(s, agent, triggerMsg, wt, circleTools = false) {
       const shared = connectors.supports(tool) ? connectors.forAgent(agent).map((c) => c.name) : [];
       return shared.length ? [`Connectors shared through AgentsCircle (MCP servers) available to you: ${shared.join(', ')}.`] : [];
     })(),
-    ...(circleTools ? [`You have AgentsCircle tools (the "agentscircle" connector): read_thread for older messages, list_agents to see who is here and what they can do, ask_user to ask the user a question with options when you truly can't decide, commit to commit changes with git when the user asks (use it instead of running git commit yourself; your sandbox may block writing to .git)${handoffsOn ? ', and mention to hand a task to another agent' : ''}.`] : []),
+    ...(circleTools ? [`You have AgentsCircle tools (the "agentscircle" connector): read_thread for older messages, list_agents to see who is here and what they can do, ask_user to ask the user a question with options when you truly can't decide, commit and push to commit and push changes with git when the user asks (use them instead of running git commit or git push yourself; your sandbox may block .git or the network)${handoffsOn ? ', and mention to hand a task to another agent' : ''}.`] : []),
     ...(handoffsOn ? [circleTools
       ? `To hand part of the work to another agent, call the mention tool. Only hand off when another agent is clearly better placed or the user asked for it. Don't hand back and forth.`
       : `To hand part of the work to another agent, end your reply with one line per hand-off, exactly like: "@codex: write tests for the login form". Only hand off when another agent is clearly better placed or the user asked for it. Don't hand back and forth.`] : []),
+    '', '### FILES YOU MAKE FOR THE USER',
+    'When the user asks for something to keep, share or look at (a document, report, list, table, chart, comparison, plan), save it as a file inside the project folder, not only in the chat, and pick the format that fits. The user sees it in the AgentsCircle panel, which previews HTML, Markdown, Word, Excel, CSV, PDF and images, and can export to Word, PDF and Excel:',
+    '- Anything with a chart, dashboard, comparison or interaction: one self-contained .html file (inline CSS and JS; charts with Chart.js from https://cdn.jsdelivr.net/npm/chart.js), polished and readable, with the data in a table too.',
+    '- Data the user will sort, filter or calculate with: .xlsx (headers in row 1, real numbers, not text). Use .csv only if you can\'t write .xlsx.',
+    '- Documents to send, print or edit (reports, letters, proposals, briefs): .docx. If you can\'t write .docx, write clean Markdown; the user can export it to Word or PDF from the panel.',
+    '- Markdown (.md) only for notes, READMEs and docs that live with the code.',
+    'If the user names a format, use it. For example, "a list of companies with a chart" is an .html page with the table and the chart (plus an .xlsx of the data when that helps). For .docx and .xlsx you can use python-docx/openpyxl or the docx/exceljs npm packages. Say the file name in your reply.',
     ...(sharedSkills.length ? ['', '### SHARED SKILLS', 'Before a task that matches one of these, read its SKILL.md and follow it:', ...sharedSkills.map((k) => `- ${k.name}: ${k.description} (${k.file})`)] : []),
     ...contextBlock(s, wt),
     '',
@@ -296,6 +303,44 @@ function gitSnapshot(folder) {
     files.set(file, { sig: `${code}:${mtime}`, code, mtime });
   }
   return { head: run('git', ['rev-parse', 'HEAD'], folder), files };
+}
+
+// Folders without git: compare file times and sizes instead (skipping dependency and build folders).
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.agentscircle', '.next', '.nuxt', 'dist', 'build', 'out', '.venv', 'venv', '__pycache__', '.cache', '.turbo', 'target', 'Pods', 'DerivedData', '.gradle', '.idea', '.vscode']);
+function fsSnapshot(folder) {
+  const files = new Map();
+  const walk = (dir, rel, depth) => {
+    if (files.size > 20000 || depth > 8) return;
+    let list; try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const d of list) {
+      if (files.size > 20000) return;
+      const r = rel ? `${rel}/${d.name}` : d.name;
+      if (d.isDirectory()) { if (!SKIP_DIRS.has(d.name) && !d.name.startsWith('.Trash')) walk(path.join(dir, d.name), r, depth + 1); }
+      else if (d.isFile()) { try { const st = fs.statSync(path.join(dir, d.name)); files.set(r, { sig: `F:${st.mtimeMs}:${st.size}`, code: '??', mtime: st.mtimeMs }); } catch { /* gone */ } }
+    }
+  };
+  walk(folder, '', 0);
+  return { head: null, files, fs: true };
+}
+const changeSnapshot = (folder) => gitSnapshot(folder) || fsSnapshot(folder);
+
+// Files the agent said it wrote (Write/Edit tools, Codex file changes) that the snapshots missed,
+// for example files git ignores. Only files inside the folder.
+function writtenByTools(folder, tools, known, startedMs) {
+  const out = [];
+  for (const t of tools || []) {
+    if (!/^(Write|Edit|MultiEdit|NotebookEdit|str_replace_based_edit_tool|create_file|write_file|edit_file|apply_patch|file_change)$/i.test(t.name || '') || !t.hint) continue;
+    for (const raw of String(t.hint).split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)) {
+      const abs = path.resolve(folder, raw);
+      const rel = path.relative(folder, abs).split(path.sep).join('/');
+      if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || known.has(rel)) continue;
+      let st; try { st = fs.statSync(abs); } catch { continue; }
+      if (!st.isFile()) continue;
+      known.add(rel);
+      out.push({ path: rel, status: (st.birthtimeMs || st.ctimeMs) >= startedMs - 2000 ? 'added' : 'modified' });
+    }
+  }
+  return out;
 }
 
 function describeChanges(folder, before, after) {
@@ -611,7 +656,8 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
     }
     const workdir = wt ? wt.dir : s.folder;
     const runKey = crypto.randomBytes(8).toString('hex');
-    const before = gitSnapshot(workdir);
+    const before = changeSnapshot(workdir);
+    const runStartedMs = Date.now();
     // Checkpoint before the turn (taken before AgentsCircle adds anything for the run).
     const ckBefore = checkpoints.snapshot(workdir, `refs/agentscircle/${s.id}/${runKey}-before`, `AgentsCircle: before @${agent.id}`);
 
@@ -717,7 +763,9 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
       if (timedOut) final = (final ? final + '\n\n' : '') + `_(stopped after ${agent.timeoutMin} minutes, the time limit for @${agent.id})_`;
       else if (stopped) final = (final ? final + '\n\n' : '') + '_(stopped by you)_';
       else if (code !== 0 && !final) final = `Exited with code ${code}${signal ? ` (${signal})` : ''}.`;
-      const diff = describeChanges(workdir, before, gitSnapshot(workdir));
+      const diff = describeChanges(workdir, before, changeSnapshot(workdir));
+      const extra = writtenByTools(workdir, reply.tools, new Set(diff.files.map((f) => f.path)), runStartedMs);
+      if (extra.length) { diff.files.push(...extra); diff.summary = `${diff.files.length} file${diff.files.length > 1 ? 's' : ''}: ${diff.files.slice(0, 8).map((f) => f.path).join(', ')}${diff.files.length > 8 ? ', …' : ''}`; }
       const ckAfter = ckBefore ? checkpoints.snapshot(workdir, `refs/agentscircle/${s.id}/${runKey}-after`, `AgentsCircle: after @${agent.id}`) : null;
       const wasLimited = !!agent.limitedAt;
       const limited = !stopped && !timedOut && accounts.noteOutcome(agent, { ok: code === 0, text: `${final}\n${stderr.slice(-2000)}` });
@@ -750,7 +798,7 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
         }
       }
       let files = diff.files;
-      if (ckBefore && ckAfter) { const exact = checkpoints.changedFiles(workdir, ckBefore, ckAfter); if (exact) files = exact; }
+      if (ckBefore && ckAfter) { const exact = checkpoints.changedFiles(workdir, ckBefore, ckAfter); if (exact) files = [...exact, ...extra.filter((x) => !exact.some((f) => f.path === x.path))]; }
       updateMessage(s, reply, {
         text: final || '(no reply)', statusLine, pending: false, error: ['error', 'limited', 'timeout', 'signin', 'model'].includes(status), limited, status, waiting: false,
         seconds: Math.round((Date.now() - startedAt) / 1000), endedAt: now(),
@@ -1328,6 +1376,73 @@ app.post('/api/github/clone', async (req, res) => {
   try { res.json(await github.clone((req.body || {}).repo, (req.body || {}).parent)); }
   catch (e) { res.status(400).json({ error: e.message, code: e.code || null }); }
 });
+// Sign in to GitHub from the app, no Terminal: runs the GitHub CLI's browser sign-in in the background,
+// shows its one-time code in the app, and opens github.com/login/device.
+let ghFlow = null;
+function ghEmit() { broadcastAll({ type: 'gh-signin', flow: ghFlow && { state: ghFlow.state, code: ghFlow.code, url: ghFlow.url, message: ghFlow.message } }); }
+app.post('/api/github/signin-app', async (_req, res) => {
+  const st = await github.status();
+  if (st.signedIn) { ghFlow = { state: 'done', message: `Signed in to GitHub as ${st.user}.` }; ghEmit(); return res.json({ state: 'done', message: ghFlow.message }); }
+  if (!st.gh) {
+    // Install the GitHub CLI in the background (Homebrew on macOS, winget on Windows), then sign in.
+    const brew = !IS_WIN && (run('which', ['brew']) || ['/opt/homebrew/bin/brew', '/usr/local/bin/brew'].find((b) => fs.existsSync(b)));
+    if (!brew && !IS_WIN) return res.json({ state: 'needs-cli', docs: 'https://cli.github.com', message: 'GitHub sign-in uses the GitHub CLI. Install it from cli.github.com, then sign in again.' });
+    if (ghFlow && ghFlow.state === 'installing') return res.json({ state: 'installing', message: ghFlow.message });
+    ghFlow = { state: 'installing', message: 'Installing the GitHub CLI (one time, about a minute)…' }; ghEmit();
+    const [cmd, args] = IS_WIN ? ['winget', ['install', '--id', 'GitHub.cli', '-e', '--silent', '--accept-package-agreements', '--accept-source-agreements']] : [brew, ['install', 'gh']];
+    const inst = spawn(cmd, args, { env: { ...process.env, HOMEBREW_NO_AUTO_UPDATE: '1', NONINTERACTIVE: '1' }, windowsHide: true, stdio: 'ignore' });
+    inst.on('error', (e) => { ghFlow = { state: 'failed', message: `Couldn't install the GitHub CLI: ${e.message}`, docs: 'https://cli.github.com' }; ghEmit(); });
+    inst.on('close', async (code) => {
+      if (IS_WIN) process.env.PATH = `${process.env.PATH};C:\\Program Files\\GitHub CLI`;
+      else if (!run('which', ['gh'])) process.env.PATH = `${path.dirname(brew)}:${process.env.PATH}`;
+      if (code !== 0 || !(await github.status()).gh) { ghFlow = { state: 'failed', message: 'Installing the GitHub CLI didn\'t work. Install it from cli.github.com, then sign in again.' }; ghEmit(); return; }
+      ghFlow = null;
+      fetch(`http://127.0.0.1:${PORT}/api/github/signin-app`, { method: 'POST' }).catch(() => {});
+    });
+    return res.json({ state: 'installing', message: ghFlow.message });
+  }
+  if (ghFlow && ghFlow.child && ghFlow.state === 'waiting') return res.json({ state: ghFlow.state, code: ghFlow.code, url: ghFlow.url, message: ghFlow.message });
+  const child = spawn('gh', ['auth', 'login', '--hostname', 'github.com', '--git-protocol', 'https', '--web', '--skip-ssh-key'], { env: { ...process.env, GH_PROMPT_DISABLED: '', BROWSER: IS_WIN ? '' : 'true' }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const f = ghFlow = { child, state: 'starting', out: '', message: 'Starting GitHub sign-in…' };
+  const feed = (d) => {
+    f.out += d;
+    const code = /code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})/.exec(f.out);
+    if (code && !f.code) {
+      f.code = code[1]; f.url = 'https://github.com/login/device'; f.state = 'waiting';
+      f.message = 'Enter this code on GitHub, then approve AgentsCircle\'s access.';
+      try { child.stdin.write('\n'); } catch { /* fine */ }
+      openUrl(f.url);
+      ghEmit();
+    }
+  };
+  child.stdout.on('data', (d) => feed(String(d))); child.stderr.on('data', (d) => feed(String(d)));
+  child.stdin.on('error', () => {});
+  const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, 15 * 60000);
+  child.on('error', (e) => { clearTimeout(timer); f.state = 'failed'; f.message = e.message; ghEmit(); });
+  child.on('close', async (code) => {
+    clearTimeout(timer);
+    if (ghFlow !== f) return;
+    f.child = null;
+    if (code === 0) {
+      spawn.sync('gh', ['auth', 'setup-git'], { windowsHide: true });
+      const s2 = await github.status();
+      f.state = s2.signedIn ? 'done' : 'failed';
+      f.message = s2.signedIn ? `Signed in to GitHub as ${s2.user}. Push and clone now use this account.` : 'GitHub sign-in finished, but the GitHub CLI still isn\'t signed in.';
+    } else if (f.state !== 'cancelled') {
+      f.state = 'failed';
+      f.message = f.out.split('\n').map((l) => l.trim()).filter((l) => l && !/code:|login\/device/i.test(l)).slice(-2).join(' ') || `GitHub sign-in ended (code ${code}).`;
+    }
+    ghEmit();
+  });
+  // Wait briefly for the code so the first answer can show it.
+  for (let i = 0; i < 30 && !f.code && f.state === 'starting'; i++) await new Promise((r) => setTimeout(r, 200));
+  res.json({ state: f.state, code: f.code, url: f.url, message: f.message });
+});
+app.post('/api/github/signin-app/cancel', (_req, res) => {
+  if (ghFlow && ghFlow.child) { ghFlow.state = 'cancelled'; try { ghFlow.child.kill(); } catch { /* gone */ } }
+  ghFlow = null; res.json({ ok: true });
+});
+
 // Opens a terminal window that signs you in to GitHub (and installs the GitHub CLI if needed).
 app.post('/api/github/signin', async (_req, res) => {
   const st = await github.status();
@@ -1538,6 +1653,17 @@ app.post('/api/internal/circle/commit', (req, res) => {
   }
   try { const out = commitPaths(r.s, paths, message, { who: `@${r.agent.id}`, what: `${paths.length === 1 ? paths[0] : `${paths.length} files`} (asked through AgentsCircle)` }); res.json({ text: `Committed ${out.hash}: ${out.files.join(', ')}` }); }
   catch (e) { res.json({ error: e.message }); }
+});
+
+app.post('/api/internal/circle/push', async (req, res) => {
+  const r = runFor(req, res); if (!r) return r === false ? undefined : res.json({ error: 'This run ended.' });
+  if (r.reply.workdir) return res.json({ error: 'You work on your own branch in parallel mode; the user applies your branch, then pushes.' });
+  try {
+    const out = await gitsync.push(r.s.folder);
+    syncNote(r.s, `@${r.agent.id} pushed ${out.pushed ? `${out.pushed} commit${out.pushed > 1 ? 's' : ''}` : out.branch} to ${out.web || out.url || out.remote} (asked through AgentsCircle).`);
+    broadcast(r.s.id, { type: 'sync', state: gitsync.state(r.s.folder) });
+    res.json({ text: `Pushed ${out.branch} to ${out.web || out.url || out.remote}.` });
+  } catch (e) { res.json({ error: e.message }); }
 });
 
 app.post('/api/internal/circle/ask', (req, res) => {
@@ -1853,6 +1979,8 @@ function kindOf(p) {
   if (e === 'svg') return 'image';
   if (IMG_EXT.has(e)) return 'image';
   if (e === 'pdf') return 'pdf';
+  if (e === 'docx') return 'doc';
+  if (e === 'xlsx' || e === 'xlsm') return 'sheet';
   if (TEXT_EXT.has(e)) return 'text';
   return 'other';
 }
@@ -1876,7 +2004,7 @@ function sessionFiles(s) {
       const key = `${wt || ''}|${f.path}`;
       const e = map.get(key) || { path: f.path, wt, branch: m.branch || null, firstStatus: f.status, agents: [], turns: 0 };
       e.status = f.status; e.turns += 1; e.lastAt = m.endedAt || m.at; e.lastAgent = m.agent; e.lastMessageId = m.id;
-      if (!e.agents.includes(m.agent)) e.agents.push(m.agent);
+      if (m.agent && !e.agents.includes(m.agent)) e.agents.push(m.agent);
       map.set(key, e);
     }
   }
@@ -1891,7 +2019,14 @@ function sessionFiles(s) {
 app.get('/api/sessions/:id/files', (req, res) => {
   const s = getSession(req, res); if (!s) return;
   const snap = gitSnapshot(s.folder);
-  res.json(sessionFiles(s).map((f) => ({ ...f, uncommitted: !f.wt && snap ? snap.files.has(f.path) : null })));
+  const list = sessionFiles(s);
+  // Files git ignores aren't "committed"; say so.
+  let ignored = new Set();
+  if (snap) {
+    const cand = list.filter((f) => !f.wt && f.exists && !snap.files.has(f.path)).map((f) => f.path);
+    if (cand.length) { const r = spawn.sync('git', ['check-ignore', '--stdin'], { cwd: s.folder, input: cand.join('\n'), encoding: 'utf8', windowsHide: true }); ignored = new Set((r.stdout || '').split(/\r?\n/).filter(Boolean)); }
+  }
+  res.json(list.map((f) => ({ ...f, uncommitted: !f.wt && snap ? snap.files.has(f.path) : null, ignored: ignored.has(f.path) || undefined })));
 });
 
 // Commit only the files one agent changed in this session (shared folder).
@@ -1906,6 +2041,44 @@ app.post('/api/sessions/:id/commit', (req, res) => {
   const paths = sessionFiles(s).filter((f) => !f.wt && (agent === '' || f.agents.includes(agent)) && snap && snap.files.has(f.path)).map((f) => f.path);
   try { res.json(commitPaths(s, paths, message, { who: 'You', what: agent ? `@${agent}'s changes` : 'the session\'s changes' })); }
   catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ---------- push / pull / put on GitHub ----------
+const gitsync = require('./gitsync')();
+app.get('/api/sessions/:id/sync', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  res.json(gitsync.state(s.folder));
+});
+const syncNote = (s, text) => addMessage(s, { role: 'system', kind: 'commit', text });
+app.post('/api/sessions/:id/push', async (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  try {
+    const r = await gitsync.push(s.folder);
+    syncNote(s, `You pushed ${r.pushed ? `${r.pushed} commit${r.pushed > 1 ? 's' : ''}` : r.branch} to ${r.web || r.url || r.remote}${r.upstream ? ` (${r.upstream})` : ''}.`);
+    broadcast(s.id, { type: 'sync', state: gitsync.state(s.folder) });
+    res.json(r);
+  } catch (e) { res.status(400).json({ error: e.message, code: e.code }); }
+});
+app.post('/api/sessions/:id/pull', async (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  if (busy(s)) return res.status(409).json({ error: 'Wait until the agents finish.' });
+  try {
+    const before = run('git', ['rev-parse', '--short', 'HEAD'], s.folder);
+    const r = await gitsync.pull(s.folder);
+    const after = run('git', ['rev-parse', '--short', 'HEAD'], s.folder);
+    if (before !== after) syncNote(s, `You pulled the latest from ${r.web || r.remote} (${before}..${after}).`);
+    broadcast(s.id, { type: 'sync', state: gitsync.state(s.folder) });
+    res.json(r);
+  } catch (e) { res.status(400).json({ error: e.message, code: e.code }); }
+});
+app.post('/api/sessions/:id/publish', async (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  try {
+    const r = await gitsync.publish(s.folder, { name: (req.body || {}).name, isPublic: !!(req.body || {}).public });
+    syncNote(s, `You put this folder on GitHub: ${r.web || r.url}.`);
+    broadcast(s.id, { type: 'sync', state: gitsync.state(s.folder) });
+    res.json(r);
+  } catch (e) { res.status(400).json({ error: e.message, code: e.code }); }
 });
 
 // Commit some files in the session's folder. AgentsCircle runs git itself, so this works even
@@ -1927,7 +2100,7 @@ function commitPaths(s, paths, message, { who, what }) {
   return { ok: true, hash, files: paths };
 }
 
-app.get('/api/sessions/:id/file', (req, res) => {
+app.get('/api/sessions/:id/file', async (req, res) => {
   const s = getSession(req, res); if (!s) return;
   const full = safePath(s, req.query.path, req.query.wt);
   if (!full) return res.status(400).json({ error: 'That file is outside the project folder.' });
@@ -1940,7 +2113,27 @@ app.get('/api/sessions/:id/file', (req, res) => {
     out.truncated = buf.length > 512 * 1024;
     out.content = buf.slice(0, 512 * 1024).toString('utf8');
   }
+  out.exports = documents.exportOptions(full);
+  if ((kind === 'doc' || kind === 'sheet' || documents.canPreviewTable(full)) && st.size < 20 * 1024 * 1024) {
+    try { Object.assign(out, await documents.preview(full)); } catch (e) { out.previewError = `Couldn't read this file: ${e.message}`; }
+  }
   res.json(out);
+});
+
+// Export a file to Word, PDF, HTML, Excel or CSV. The copy is saved next to it, so it shows in Files.
+const documents = require('./documents');
+app.post('/api/sessions/:id/export', async (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const b = req.body || {};
+  const full = safePath(s, b.path, b.wt);
+  if (!full || !fs.existsSync(full)) return res.status(400).json({ error: 'That file isn\'t in the project folder.' });
+  try {
+    const out = await documents.exportFile(full, String(b.to || ''));
+    const dir = path.posix.dirname(String(b.path).replace(/\\/g, '/'));
+    const rel = (dir === '.' ? '' : dir + '/') + path.basename(out);
+    addMessage(s, { role: 'system', kind: 'export', ...(b.wt ? { workdir: true, agent: b.wt } : {}), files: [{ path: rel, status: 'added' }], text: `You exported ${b.path} as ${path.basename(out)}.` });
+    res.json({ path: rel, name: path.basename(out) });
+  } catch (e) { res.status(400).json({ error: e.message, code: e.code }); }
 });
 
 // Save your own edit to a file from the panel's editor.

@@ -51,6 +51,7 @@ function drawRepos() {
 $('ghRepo').addEventListener('input', drawRepos);
 
 async function signIn() {
+  if (typeof openGhSignin === 'function') { openGhSignin({ onDone: () => { ghState = null; ghRepos = null; loadGithub(true); } }); return; }
   try {
     const r = await api('/api/github/signin', { method: 'POST' });
     if (r.docs) { $('fErr').innerHTML = `${esc(r.message)} <a href="${esc(r.docs)}" target="_blank" rel="noopener">cli.github.com</a>`; return; }

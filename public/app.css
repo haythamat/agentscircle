@@ -505,7 +505,7 @@ body.panel-open.has-session #panel { display: flex; animation: panelIn var(--t-s
 .adots { display: inline-flex; gap: 3px; } .adots i { width: 7px; height: 7px; border-radius: 2px; display: block; }
 .commit { font: 12px var(--mono); color: var(--muted); display: flex; gap: 6px; align-items: center; padding: 3px 0; } .commit i { width: 7px; height: 7px; border-radius: 2px; }
 .fhead { display: flex; gap: 10px; align-items: center; } .fhead button { min-height: 28px; }
-.ftabs { display: inline-flex; gap: 2px; margin: 12px 0 10px; align-items: center; flex-wrap: wrap; padding: 2px; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r); }
+.ftabs { display: flex; gap: 2px; margin: 12px 0 10px; align-items: center; flex-wrap: nowrap; padding: 2px; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r); }
 .ftabs button { border: none; background: transparent; min-height: 26px; padding: 0 10px; font-size: 12.5px; color: var(--muted); border-radius: 6px; }
 .ftabs button.on { background: var(--raised); color: var(--text); box-shadow: var(--shadow-sm); }
 .ftabs [data-act] { color: var(--text) !important; }
@@ -895,7 +895,7 @@ header .tools { flex: none; }
 .sistep.now .num { border-color: var(--accent); color: var(--accent); }
 .sistep.done .num { background: var(--ok-bg); border-color: transparent; color: var(--ok); }
 .sistep a { color: var(--accent); }
-#signinModal, #askModal { z-index: 55; }
+#signinModal, #askModal, #ghModal { z-index: 55; }
 
 .commitform { margin-top: 4px; display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .commitform label { margin: 0; }
@@ -929,3 +929,44 @@ header .tools { flex: none; }
 #termHost .xterm-viewport::-webkit-scrollbar { width: 8px; }
 #termHost .xterm-viewport::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
 .cmenu .kbd { margin-left: auto; padding-left: 16px; color: var(--muted); font-size: 11.5px; }
+
+/* ---------- push to GitHub ---------- */
+.syncbar { padding: 10px 12px; }
+.synch { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); flex-wrap: wrap; }
+.synch { flex-wrap: nowrap; }
+.synch .syncline { flex: 1; min-width: 0; line-height: 1.4; }
+.synch > .ic { flex: none; align-self: flex-start; margin-top: 2px; }
+.synch > button { flex: none; }
+.synch .syncline b { color: var(--text); font-weight: 600; }
+.synch a { color: var(--accent); text-decoration: none; }
+.synch a:hover { text-decoration: underline; }
+.synch button { min-height: 28px; padding: 0 12px; }
+.pubform { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.pubform label { margin: 0; }
+.pubform .seg { align-self: flex-start; }
+.pubform .cfbtns { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ghcode { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 14px; border: 1px solid var(--line-2); border-radius: var(--r-md); background: var(--panel2); }
+.ghcode span { font: 600 26px/1 var(--mono); letter-spacing: .12em; }
+
+/* ---------- export and document previews ---------- */
+.exwrap { position: relative; }
+.exwrap > button { display: inline-flex; align-items: center; gap: 5px; }
+.exwrap .exmenu { position: absolute; top: calc(100% + 4px); right: 0; left: auto; min-width: 230px; transform-origin: top right; }
+.exwrap.open .exmenu { display: block; opacity: 1; transform: none; }
+.exmenu button { justify-content: space-between !important; }
+.exnote { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; padding: 7px 8px 7px 10px; border: 1px solid var(--ok-soft); background: var(--ok-bg); border-radius: var(--r); font-size: 12.5px; }
+.exnote.err { border-color: var(--bad-soft); background: var(--danger-bg); color: var(--danger); }
+.exnote .ic { color: var(--ok); }
+.exnote .linkbtn { font-size: 12.5px; }
+iframe.docpreview { height: 560px; }
+.sheettabs { display: flex; gap: 2px; margin: 0 0 6px; overflow-x: auto; }
+.sheettabs button { min-height: 26px; padding: 0 10px; font-size: 12px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-2); white-space: nowrap; }
+.sheettabs button.on { background: var(--sel); border-color: var(--line-2); color: var(--text); }
+.sheetscroll { overflow: auto; max-height: 560px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--field); }
+table.grid { border-collapse: separate; border-spacing: 0; font-size: 12.5px; font-variant-numeric: tabular-nums; min-width: 100%; }
+table.grid th, table.grid td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 4px 8px; white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+table.grid td.num { text-align: right; }
+table.grid thead th { position: sticky; top: 0; z-index: 1; background: var(--panel2); color: var(--muted); font-weight: 500; text-align: center; }
+table.grid th.rn { position: sticky; left: 0; background: var(--panel2); color: var(--muted); font-weight: 500; text-align: right; min-width: 32px; }
+table.grid thead th.rn { z-index: 2; }
+table.grid tr.hdr td { font-weight: 600; background: var(--hover); }

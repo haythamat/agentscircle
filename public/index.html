@@ -236,7 +236,7 @@ const acctTitle = (a) => [a.toolName, a.label, a.identity && a.identity.label ? 
 const api = async (url, opts = {}) => {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || r.statusText);
+  if (!r.ok) throw Object.assign(new Error(data.error || r.statusText), { code: data.code, status: r.status });
   return data;
 };
 
@@ -591,6 +591,8 @@ function connect() {
     const ev = JSON.parse(e.data);
     if (ev.type && ev.type.startsWith('term:')) { if (typeof onTermEvent === 'function') onTermEvent(ev); return; }
     if (ev.type === 'signin') { if (typeof onSigninEvent === 'function') onSigninEvent(ev.flow); return; }
+    if (ev.type === 'gh-signin') { if (typeof onGhSigninEvent === 'function') onGhSigninEvent(ev.flow); return; }
+    if (ev.type === 'sync') { if (typeof onSyncEvent === 'function') onSyncEvent(ev.state); return; }
     if (ev.type === 'connector-signin') { if (typeof onConnectorSignin === 'function') onConnectorSignin(ev.flow); return; }
     if (ev.type === 'sessions') { if (ev.deleted && current && current.id === ev.deleted) leaveSession(); loadSessions(); return; }
     if (typeof handleAttentionEvent === 'function' && handleAttentionEvent(ev)) return;
@@ -916,6 +918,7 @@ $('aAdd').onclick = async () => {
 </script>
 <script src="/panel.js"></script>
 <script src="/terminal.js"></script>
+<script src="/sync.js"></script>
 <script src="/attention.js"></script>
 <script src="/connectors.js"></script>
 <script src="/collab.js"></script>

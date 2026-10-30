@@ -55,6 +55,14 @@ Sessions are saved in `~/.agentscircle/sessions`.
 - **Resizable panel:** drag the panel's edge to make it wider (or taller when it sits below the chat). Double-click the edge or use the expand button to give it as much room as the chat allows; click again to go back. The size is remembered.
 - **Edit files in the panel:** open a file from the Files tab, a file chip or an attachment, and use **Edit**. It has line numbers, Tab and Shift+Tab indenting, and keeps your indentation on new lines. Save with ⌘S (Ctrl+S). Unsaved edits stay while you move around the panel. If an agent changed the file after you opened it, AgentsCircle asks before overwriting. Every save adds a note to the chat, so the next agent knows you changed the file.
 
+## Push, documents and exports (v1.3.9)
+
+- **Push to GitHub.** The Files tab shows how many commits are waiting and has **Push** (and **Pull** when GitHub has newer commits). A folder that isn't on GitHub yet gets **Put on GitHub**: it creates a private (or public) repository on your account and pushes. Agents can push too, with the **push** circle tool. **Sign in to GitHub** happens in the app: it shows a one-time code and opens GitHub, no Terminal (it installs the GitHub CLI first if needed).
+- **Every file an agent makes shows in Files**, including in folders without git and files git ignores.
+- **Previews** for Word (.docx), Excel (.xlsx) and CSV files, next to HTML, Markdown, PDF and images.
+- **Export** a file from the panel: Markdown to Word, PDF, HTML or Excel (its tables); HTML to PDF or Excel; CSV to Excel; Excel to CSV or PDF; Word to PDF or HTML. The copy is saved next to the original.
+- **Better formats from agents.** Agents are told to make charts and comparisons as interactive HTML pages, data as Excel sheets, and documents as Word files, and to keep Markdown for notes.
+
 ## One sign-in for connectors (v1.3.8)
 
 Click **Sign in** on a connector (Settings, Connectors) and approve access in your browser. That one sign-in works for every agent: AgentsCircle keeps it, refreshes it, and hands each agent a local link that only works on your computer while AgentsCircle runs. Adding a connector that needs sign-in starts the sign-in right away. **Sign out** removes it.

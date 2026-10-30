@@ -9,7 +9,7 @@ const fmtSize = (b) => b == null ? '' : b < 1024 ? `${b} B` : b < 1048576 ? `${(
 const baseName = (p) => p.split('/').pop();
 const dirName = (p) => p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '';
 const agentColor = (id) => (agentMap()[id] || {}).color || 'var(--muted)';
-const KIND_ICON = { html: 'globe', markdown: 'fileText', image: 'image', pdf: 'file', text: 'fileCode', other: 'file' };
+const KIND_ICON = { html: 'globe', markdown: 'fileText', image: 'image', pdf: 'file', text: 'fileCode', doc: 'fileText', sheet: 'layout', other: 'file' };
 const STATUS_LABEL = { added: 'New', modified: 'Edited', deleted: 'Deleted' };
 
 function turns() { return (current ? current.messages : []).filter((m) => m.role === 'agent'); }
@@ -206,15 +206,16 @@ function tickTimer() {
 
 // ---------- Files ----------
 async function filesListHtml() {
-  const files = await api(`/api/sessions/${current.id}/files`);
-  if (!files.length) return '<div class="pcard"><div class="hint" style="margin:0">Files that agents create or change in this session show up here, with a live preview.</div></div>';
+  const [files] = await Promise.all([api(`/api/sessions/${current.id}/files`), typeof loadSync === 'function' ? loadSync() : null]);
+  const syncBar = typeof syncCardHtml === 'function' ? syncCardHtml() : '';
+  if (!files.length) return '<div class="pcard"><div class="hint" style="margin:0">Files that agents create or change in this session show up here, with a live preview.</div></div>' + syncBar;
   const commits = turns().flatMap((m) => (m.commits || []).map((c) => ({ c, agent: m.agent })));
   const created = files.filter((f) => f.isNew && f.exists);
   const section = (title, list) => !list.length ? '' : `<div class="psec">${title} <span class="hint" style="margin:0">${list.length}</span></div>` + list.map((f) => `
     <div class="frow ${f.exists ? '' : 'gone'}" data-open="${esc(f.path)}" data-wt="${esc(f.wt || '')}">
       <span class="ficon k-${f.kind}">${ic(KIND_ICON[f.kind] || 'file')}</span>
-      <div class="fmain"><div class="fname">${esc(baseName(f.path))}</div><div class="hint" style="margin:0">${f.wt ? `on @${esc(f.wt)}'s branch · ` : ''}${esc(dirName(f.path))}${f.exists ? fmtSize(f.size) : 'deleted'}</div></div>
-      <div class="fmeta"><span class="fstat ${f.isNew ? 'added' : f.status}">${f.isNew && f.exists ? 'New' : STATUS_LABEL[f.status]}</span>${f.uncommitted === false && !f.wt && f.exists ? '<span class="hint" style="margin:0;font-size:11px">committed</span>' : ''}
+      <div class="fmain"><div class="fname">${esc(baseName(f.path))}</div><div class="hint" style="margin:0">${f.wt ? `on @${esc(f.wt)}'s branch · ` : ''}${dirName(f.path) ? esc(dirName(f.path)) + ' · ' : ''}${f.exists ? fmtSize(f.size) : 'deleted'}</div></div>
+      <div class="fmeta"><span class="fstat ${f.isNew ? 'added' : f.status}">${f.isNew && f.exists ? 'New' : STATUS_LABEL[f.status]}</span>${f.ignored ? '<span class="hint" style="margin:0;font-size:11px" title="git ignores this file">not in git</span>' : f.uncommitted === false && !f.wt && f.exists ? '<span class="hint" style="margin:0;font-size:11px">committed</span>' : ''}
       <span class="adots">${f.agents.map((a) => `<i title="@${esc(a)}" style="background:${agentColor(a)}"></i>`).join('')}</span></div></div>`).join('');
   // Filter by agent and commit one agent's work (shared folder only).
   const shared = files.filter((f) => !f.wt);
@@ -228,7 +229,7 @@ async function filesListHtml() {
     <div class="commitform" style="display:none"><label for="commitMsg">Commit message</label><textarea id="commitMsg" rows="2" spellcheck="true"></textarea>
     <div class="cfbtns"><span class="hint" style="margin:0">⌘↵ to commit</span><span style="flex:1"></span><button data-commitcancel>Cancel</button><button class="primary" data-commitgo="${esc(pick)}">Commit</button></div><div class="err" id="commitErr"></div></div></div>` : '';
   const others = files.filter((f) => !(f.isNew && f.exists));
-  return filterBar + commitBar + section('Created', created.filter(visible)) + section('Changed', others.filter(visible))
+  return filterBar + commitBar + syncBar + section('Created', created.filter(visible)) + section('Changed', others.filter(visible))
     + (commits.length ? `<div class="psec">Commits</div>${commits.map((x) => `<div class="commit"><i style="background:${agentColor(x.agent)}"></i>${esc(x.c)}</div>`).join('')}` : '');
 }
 $('panelBody').addEventListener('click', async (e) => {
@@ -262,12 +263,45 @@ $('panelBody').addEventListener('click', async (e) => {
   if (row) openFile(row.dataset.open, row.dataset.wt || null);
 });
 
+const hasPreview = (info) => ['html', 'image', 'markdown', 'pdf', 'doc', 'sheet'].includes(info.kind) || !!info.sheets;
+const EXPORT_LABEL = { docx: ['Word document', '.docx'], pdf: ['PDF', '.pdf'], html: ['Web page', '.html'], xlsx: ['Excel spreadsheet', '.xlsx'], csv: ['CSV', '.csv'] };
+function sheetHtml(info) {
+  const sheets = info.sheets || [];
+  if (!sheets.length) return '<div class="pcard"><div class="hint" style="margin:0">This spreadsheet is empty.</div></div>';
+  const i = Math.min(panel.sheet || 0, sheets.length - 1), sh = sheets[i];
+  const width = Math.max(1, ...sh.rows.map((r) => r.length));
+  const col = (n) => { let t = ''; n++; while (n) { const m = (n - 1) % 26; t = String.fromCharCode(65 + m) + t; n = Math.floor((n - 1) / 26); } return t; };
+  const cell = (v) => { const t = v == null ? '' : String(v); return `<td class="${typeof v === 'number' || /^-?[\d,.]+%?$/.test(t) ? 'num' : ''}">${esc(t)}</td>`; };
+  return `${sheets.length > 1 ? `<div class="sheettabs">${sheets.map((x, k) => `<button data-sheet="${k}" class="${k === i ? 'on' : ''}">${esc(x.name)}</button>`).join('')}</div>` : ''}
+    <div class="sheetscroll"><table class="grid"><thead><tr><th class="rn"></th>${Array.from({ length: width }, (_, k) => `<th>${col(k)}</th>`).join('')}</tr></thead>
+    <tbody>${sh.rows.map((r, n) => `<tr class="${n === 0 ? 'hdr' : ''}"><th class="rn">${n + 1}</th>${Array.from({ length: width }, (_, k) => cell(r[k])).join('')}</tr>`).join('')}</tbody></table></div>
+    ${sh.total > sh.rows.length ? `<div class="hint">Showing the first ${sh.rows.length} of ${sh.total} rows. Open it to see everything.</div>` : ''}`;
+}
+const docFrame = (html) => `<iframe class="preview docpreview" sandbox="" srcdoc="${esc(`<!doctype html><meta charset=utf-8><style>body{font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;color:#1b1d20;background:#fff;max-width:760px;margin:24px auto;padding:0 28px}table{border-collapse:collapse}td,th{border:1px solid #d8dbe0;padding:4px 8px}td p,th p{margin:0}img{max-width:100%}</style>${html}`)}"></iframe>`;
+function exportMenuHtml(info) {
+  const ex = info.exports || [];
+  if (!ex.length) return '';
+  return `<div class="exwrap"><button data-exportmenu aria-haspopup="menu">${ic('export', 'sm')}Export${ic('chevronDown', 'sm')}</button><div class="cmenu exmenu" role="menu">${ex.map((t) => `<button role="menuitem" data-exportto="${t}"><span>${EXPORT_LABEL[t][0]}</span><span class="hint" style="margin:0">${EXPORT_LABEL[t][1]}</span></button>`).join('')}</div></div>`;
+}
+async function exportCurrent(to, btn) {
+  const p = panel.file;
+  if (btn) { btn.disabled = true; btn.innerHTML = `${ic('export', 'sm')}Exporting…`; }
+  try {
+    const r = await api(`/api/sessions/${current.id}/export`, { method: 'POST', body: { path: p, to, wt: panel.wt } });
+    panel.exported = { path: r.path, name: r.name };
+  } catch (e) {
+    panel.exported = { error: e.message, code: e.code };
+  }
+  renderFile();
+}
+
 async function openFile(p, wt) {
   panel.file = p; panel.wt = wt || null;
   if (panel.tab !== 'files') { panel.tab = 'files'; document.querySelectorAll('#panelTabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === 'files')); }
   const info = await api(`/api/sessions/${current.id}/file?path=${encodeURIComponent(p)}${panel.wt ? `&wt=${panel.wt}` : ''}`);
   panel.info = info;
-  const preview = ['html', 'image', 'markdown', 'pdf'].includes(info.kind);
+  const preview = hasPreview(info);
+  panel.sheet = 0; panel.exported = null;
   panel.view = panel.drafts.has(draftKey()) ? 'edit' : preview ? 'preview' : editable(info) ? 'edit' : 'source';
   renderFile();
 }
@@ -371,7 +405,7 @@ async function renderFile() {
   const info = panel.info; if (!info) return;
   const p = panel.file;
   const touches = turns().filter((m) => (m.workdir ? m.agent : null) === panel.wt && (m.files || []).some((f) => f.path === p));
-  const canPreview = ['html', 'image', 'markdown', 'pdf'].includes(info.kind);
+  const canPreview = hasPreview(info);
   const canEdit = editable(info);
   if (panel.view === 'edit' && !canEdit) panel.view = info.content != null ? 'source' : canPreview ? 'preview' : 'changes';
   if (panel.view === 'source' && canEdit) panel.view = 'edit';
@@ -382,6 +416,9 @@ async function renderFile() {
   else if (panel.view === 'preview' && info.kind === 'html') view = `<iframe class="preview" sandbox="allow-scripts allow-forms allow-popups" src="${raw}?t=${Date.now()}"></iframe>`;
   else if (panel.view === 'preview' && info.kind === 'pdf') view = `<iframe class="preview" src="${raw}"></iframe>`;
   else if (panel.view === 'preview' && info.kind === 'image') view = `<div class="imgwrap"><img src="${raw}?t=${Date.now()}" alt="${esc(baseName(p))}"></div>`;
+  else if (panel.view === 'preview' && info.previewError) view = `<div class="pcard"><div class="err" style="margin:0">${esc(info.previewError)}</div></div>`;
+  else if (panel.view === 'preview' && info.kind === 'doc') view = docFrame(info.docHtml || '');
+  else if (panel.view === 'preview' && info.sheets) view = sheetHtml(info);
   else if (panel.view === 'preview' && info.kind === 'markdown') view = `<div class="mdview body">${md(dirty ? panel.drafts.get(draftKey()).text : info.content || '')}</div>`;
   else if (panel.view === 'edit') view = editorHtml();
   else if (panel.view === 'changes') {
@@ -396,16 +433,27 @@ async function renderFile() {
 
   const body = $('panelBody');
   body.classList.toggle('editing', panel.view === 'edit');
-  body.innerHTML = `<div class="fhead"><button class="ghost ib" id="fBack" data-tip="All files">${ic('back')}</button><div class="fmain"><div class="fname">${esc(baseName(p))}</div><div class="hint" style="margin:0">${panel.wt ? `on @${esc(panel.wt)}'s branch · ` : ''}${esc(dirName(p))}${info.exists ? fmtSize(info.size) : ''}</div></div></div>
+  body.innerHTML = `<div class="fhead"><button class="ghost ib" id="fBack" data-tip="All files">${ic('back')}</button><div class="fmain"><div class="fname">${esc(baseName(p))}</div><div class="hint" style="margin:0">${panel.wt ? `on @${esc(panel.wt)}'s branch · ` : ''}${dirName(p) ? esc(dirName(p)) + ' · ' : ''}${info.exists ? fmtSize(info.size) : ''}</div></div></div>
     <div class="ftabs">${canPreview ? `<button data-v="preview" class="${panel.view === 'preview' ? 'on' : ''}">Preview</button>` : ''}<button data-v="changes" class="${panel.view === 'changes' ? 'on' : ''}">Changes</button>${canEdit ? `<button data-v="edit" class="${panel.view === 'edit' ? 'on' : ''}${dirty ? ' dirty' : ''}">${ic('pencil', 'sm')}Edit</button>` : info.content != null ? `<button data-v="source" class="${panel.view === 'source' ? 'on' : ''}">Source</button>` : ''}
-      <span style="flex:1"></span><button data-act="reveal" title="Show in Finder / Explorer">Reveal</button><button data-act="open" title="Open in its default app">Open</button></div>
+      <span style="flex:1"></span>${info.exists ? exportMenuHtml(info) : ''}<button class="ghost ib" data-act="reveal" data-tip="Show in Finder / Explorer" aria-label="Show in Finder">${ic('folder', 'sm')}</button><button class="ghost ib" data-act="open" data-tip="Open in its app" aria-label="Open in its app">${ic('external', 'sm')}</button></div>
+    ${panel.exported ? (panel.exported.error
+      ? `<div class="exnote err">${esc(panel.exported.error)}${panel.exported.code === 'nopdf' ? ` <a href="${raw}" target="_blank" rel="noopener">Open it to print</a>` : ''}<button class="ghost ib sm" data-exclose aria-label="Dismiss">${ic('x', 'sm')}</button></div>`
+      : `<div class="exnote">${ic('check', 'sm')}<span>Saved <b>${esc(panel.exported.name)}</b> next to it.</span><span style="flex:1"></span><button class="linkbtn" data-exshow="${esc(panel.exported.path)}">Show</button><button class="linkbtn" data-exopen="${esc(panel.exported.path)}">Open</button><button class="ghost ib sm" data-exclose aria-label="Dismiss">${ic('x', 'sm')}</button></div>`) : ''}
     <div id="fileView">${view}</div>
     ${panel.view === 'edit' ? '' : `<div class="psec">History</div>${touches.slice().reverse().map((m) => { const f = m.files.find((x) => x.path === p); return `<div class="trow" data-goto="${m.id}"><span class="sdot ${f.status === 'deleted' ? 'error' : 'done'}"></span><div class="tmain"><b style="color:${agentColor(m.agent)}">@${esc(m.agent)}</b> <span class="hint" style="margin:0">${esc(STATUS_LABEL[f.status].toLowerCase())} · ${new Date(m.endedAt || m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span><div class="hint" style="margin:2px 0 0">${esc(requestFor(m))}</div></div></div>`; }).join('') || '<div class="hint">No agent has changed this file in this session.</div>'}`}`;
   if (panel.view === 'edit') mountEditor();
   $('fBack').onclick = () => { panel.file = null; panel.conflict = null; body.classList.remove('editing'); renderPanel(); };
   document.querySelectorAll('.ftabs [data-v]').forEach((b) => b.onclick = () => { panel.view = b.dataset.v; renderFile(); });
   document.querySelectorAll('.ftabs [data-act]').forEach((b) => b.onclick = () => api(`/api/sessions/${current.id}/reveal`, { method: 'POST', body: { path: p, open: b.dataset.act === 'open', wt: panel.wt } }));
+  document.querySelectorAll('[data-sheet]').forEach((b) => b.onclick = () => { panel.sheet = +b.dataset.sheet; renderFile(); });
+  const em = document.querySelector('[data-exportmenu]');
+  if (em) em.onclick = (ev) => { ev.stopPropagation(); em.parentElement.classList.toggle('open'); };
+  document.querySelectorAll('[data-exportto]').forEach((b) => b.onclick = () => { b.closest('.exwrap').classList.remove('open'); exportCurrent(b.dataset.exportto, em); });
+  document.querySelectorAll('[data-exclose]').forEach((b) => b.onclick = () => { panel.exported = null; renderFile(); });
+  document.querySelectorAll('[data-exshow]').forEach((b) => b.onclick = () => openFile(b.dataset.exshow, panel.wt));
+  document.querySelectorAll('[data-exopen]').forEach((b) => b.onclick = () => api(`/api/sessions/${current.id}/reveal`, { method: 'POST', body: { path: b.dataset.exopen, open: true, wt: panel.wt } }));
 }
+document.addEventListener('click', (e) => { if (!e.target.closest('.exwrap')) document.querySelectorAll('.exwrap.open').forEach((w) => w.classList.remove('open')); });
 // After an agent's turn: reload the open file, unless you're in the middle of editing it.
 async function refreshOpenFile(force) {
   if (panel.tab !== 'files' || !panel.file || !current) return;

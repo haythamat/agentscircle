@@ -73,6 +73,11 @@ const TOOLS = [
     }, required: ['message'] },
   },
   {
+    name: 'push',
+    description: 'Push the committed changes to GitHub (the folder\'s git remote), through AgentsCircle, which uses the user\'s own GitHub sign-in. Use this instead of running git push yourself: your sandbox may block the network or .git. Only push when the user asked for it. Commit first.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'ask_user',
     description: 'Ask the user a question in the chat and wait for the answer. Prefer 2-5 short options when you can; the user can always type their own answer. Use it only when you can\'t reasonably decide yourself.',
     inputSchema: { type: 'object', properties: {
@@ -108,6 +113,10 @@ async function callTool(name, args) {
     }
     if (name === 'commit') {
       const r = await call('POST', '/circle/commit', args);
+      return r.error ? { ...text(r.error), isError: true } : text(r.text);
+    }
+    if (name === 'push') {
+      const r = await call('POST', '/circle/push', args);
       return r.error ? { ...text(r.error), isError: true } : text(r.text);
     }
     if (name === 'ask_user') {
