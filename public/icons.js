@@ -85,6 +85,20 @@ function monogram(id) {
   const b = parts[1] ? parts[1][0] : (parts[0] || '').replace(/[aeiou]/gi, '')[1] || (parts[0] || '')[1] || '';
   return (a + b).toUpperCase();
 }
+// Simplified brand marks, white on the agent's colour. Other tools keep the monogram.
+const TOOL_LOGOS = {
+  claude: '<g stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/></g>',
+  codex: '<path d="M12 2.8 20 7.4v9.2l-8 4.6-8-4.6V7.4z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><path d="m9 10.5 2.2 1.8L9 14.1M12.8 14.2h2.4" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+  cursor: '<path d="M12 2.8 20 7.4v9.2l-8 4.6-8-4.6V7.4z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><path d="M4 7.4 12 12l8-4.6M12 12v9.2" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>',
+  opencode: '<path fill="#fff" fill-rule="evenodd" d="M5 3h14v18H5zm4 4v10h6V7z"/>',
+};
+function toolOf(id) {
+  let a = null; try { a = agentMap()[id]; } catch {}
+  if (a && a.tool) return a.tool;
+  return Object.keys(TOOL_LOGOS).find((t) => id === t || String(id).startsWith(t + '-')) || '';
+}
 function tile(id, color, size = '') {
-  return `<span class="tile${size ? ' ' + size : ''}" style="--c:${color || 'var(--muted)'}" aria-hidden="true">${monogram(id)}</span>`;
+  const logo = TOOL_LOGOS[toolOf(id)];
+  const inner = logo ? `<svg viewBox="0 0 24 24" class="tlogo">${logo}</svg>` : monogram(id);
+  return `<span class="tile${size ? ' ' + size : ''}" style="--c:${color || 'var(--muted)'}" aria-hidden="true">${inner}</span>`;
 }
