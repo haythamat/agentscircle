@@ -2115,6 +2115,17 @@ app.post('/api/sessions/:id/gitignore', (req, res) => {
   const pattern = '/' + fromRoot.replace(/([\\*?\[#!\s])/g, '\\$1') + (isDir ? '/' : '');
   const file = path.join(root, '.gitignore');
   let text = ''; try { text = fs.readFileSync(file, 'utf8'); } catch { /* new file */ }
+  if ((req.body || {}).remove) {
+    // Toggle off: drop the line(s) we would have written, so git sees the file again.
+    const bare = pattern.replace(/\/$/, '');
+    const forms = new Set([bare, bare + '/', bare.slice(1), bare.slice(1) + '/']);
+    const kept = text.split(/\r?\n/).filter((l) => !forms.has(l.trim()));
+    if (kept.length !== text.split(/\r?\n/).length) fs.writeFileSync(file, kept.join('\n'));
+    const still = spawn.sync('git', ['check-ignore', '-q', '--', rel], { cwd: s.folder, windowsHide: true }).status === 0;
+    if (still) return res.status(400).json({ error: 'Another rule in a .gitignore (a pattern like *.md) still ignores this file. Edit that rule to stop ignoring it.' });
+    addMessage(s, { role: 'system', kind: 'hint', text: `You removed \`${fromRoot}${isDir ? '/' : ''}\` from .gitignore. It can be committed and pushed to GitHub again.` });
+    return res.json({ ok: true, removed: true });
+  }
   const had = text.split(/\r?\n/).some((l) => l.trim() === pattern || l.trim() === pattern.replace(/\/$/, ''));
   if (!had) fs.writeFileSync(file, text + (text && !text.endsWith('\n') ? '\n' : '') + pattern + '\n');
   let untracked = false;
@@ -2213,6 +2224,9 @@ app.get('/api/sessions/:id/file', async (req, res) => {
     out.content = buf.slice(0, 512 * 1024).toString('utf8');
   }
   out.exports = documents.exportOptions(full);
+  if (!req.query.wt && checkpoints.isRepo(s.folder)) {
+    out.ignored = spawn.sync('git', ['check-ignore', '-q', '--', String(req.query.path)], { cwd: s.folder, windowsHide: true }).status === 0 || undefined;
+  }
   if ((kind === 'doc' || kind === 'sheet' || kind === 'slides' || documents.canPreviewTable(full)) && st.size < 20 * 1024 * 1024) {
     try { Object.assign(out, await documents.preview(full)); } catch (e) { out.previewError = `Couldn't read this file: ${e.message}`; }
   }

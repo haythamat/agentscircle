@@ -986,6 +986,9 @@ iframe.slidepreview { height: 600px; background: #e9ebee; }
 /* Files tab: all files view */
 .afilter.fmode { margin-bottom: 8px; }
 .frow.dim { opacity: .55; }
+button.ign-on, button.ghost.ign-on { color: var(--on-accent); background: var(--accent); }
+button.ign-on:hover, button.ghost.ign-on:hover { filter: brightness(1.1); }
+.frow .ignbtn.ign-on { opacity: 1; }
 .frow .ignbtn { opacity: 0; transition: opacity var(--t-fast) ease; }
 .frow:hover .ignbtn, .frow:focus-within .ignbtn { opacity: 1; }
 @media (hover: none) { .frow .ignbtn { opacity: 1; } }
