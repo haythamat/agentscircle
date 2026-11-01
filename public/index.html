@@ -436,6 +436,8 @@ async function copyText(t, btn) {
 document.addEventListener('click', (e) => {
   const cc = e.target.closest('[data-copycode]');
   if (cc) { const code = cc.parentElement.querySelector('code'); if (code) copyText(code.textContent.replace(/\n$/, ''), cc); return; }
+  const es = e.target.closest('[data-editsent]');
+  if (es && current) { const m = current.messages.find((x) => x.id === es.dataset.editsent); if (m) { input.value = m.text; autosize(); input.focus(); input.setSelectionRange(input.value.length, input.value.length); } return; }
   const cm = e.target.closest('[data-copymsg]');
   if (cm && current) { const m = current.messages.find((x) => x.id === cm.dataset.copymsg); if (m) copyText((m.text || '').trim(), cm); }
 });
@@ -521,7 +523,14 @@ function msgHtml(m) {
   const acct = m.agent ? (m.account || acctText(a)) : '';
   const meta = [clock(m.at), m.seconds != null ? fmtSecs(m.seconds) : '', m.role === 'agent' ? [m.model || m.chosenModel, m.effort].filter(Boolean).join(' ') : '', m.imported ? 'imported' : ''].filter(Boolean).join(' · ');
   let who;
-  if (m.role === 'user') who = `You<span class="meta">${meta}</span>`;
+  if (m.role === 'user') {
+    who = `You<span class="meta">${meta}</span>`;
+    // A message you stopped can be pulled back into the box, edited and sent again.
+    const at = current.messages.indexOf(m);
+    let stopped = false;
+    for (let i = at + 1; i < current.messages.length && current.messages[i].role !== 'user'; i++) if (current.messages[i].role === 'agent' && current.messages[i].status === 'stopped') stopped = true;
+    if (stopped) who += `<button class="linkbtn stopedit" data-editsent="${m.id}">${ic('pencil', 'sm')}Edit and resend</button>`;
+  }
   else {
     const st = m.pending ? (m.waiting ? `<span class="st waiting">${(m.questions || []).some(q => q.status === 'pending') ? 'Question' : 'Needs OK'}</span>` : '<span class="st working">Working</span>')
       : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout', 'signin', 'model'].includes(m.status) ? `<span class="st ${['signin', 'model'].includes(m.status) ? 'error' : m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : m.status === 'signin' ? 'Signed out' : m.status === 'model' ? 'Model refused' : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';

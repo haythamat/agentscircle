@@ -205,7 +205,30 @@ function tickTimer() {
 }
 
 // ---------- Files ----------
+// Files tab: what agents changed, or every file in the folder.
 async function filesListHtml() {
+  const mode = panel.fmode === 'all' ? 'all' : 'changed';
+  const toggle = `<div class="afilter fmode"><button data-fmode="changed" class="${mode === 'changed' ? 'on' : ''}">Changed</button><button data-fmode="all" class="${mode === 'all' ? 'on' : ''}">All files</button></div>`;
+  return toggle + (mode === 'all' ? await treeHtml('', 0) : await changedFilesHtml());
+}
+panel.openDirs = new Set(JSON.parse(localStorage.getItem('agentscircle:dirs') || '[]'));
+async function treeHtml(dir, depth) {
+  let r;
+  try { r = await api(`/api/sessions/${current.id}/tree?dir=${encodeURIComponent(dir)}`); }
+  catch (e) { return `<div class="err" style="padding:4px 8px">${esc(e.message)}</div>`; }
+  if (!r.entries.length) return depth ? `<div class="hint" style="margin:0;padding:4px 8px 4px ${8 + depth * 16}px">Empty</div>` : '<div class="pcard"><div class="hint" style="margin:0">This folder is empty.</div></div>';
+  const rows = await Promise.all(r.entries.map(async (e) => {
+    const open = e.dir && panel.openDirs.has(e.path);
+    const ign = r.isRepo ? (e.ignored ? '<span class="hint" style="margin:0;font-size:11px" title="git ignores this">not in git</span>' : `<button class="ghost ib sm ignbtn" data-ignore="${esc(e.path)}" data-tip="Never push to GitHub" aria-label="Add ${esc(e.name)} to .gitignore">${ic('eyeOff', 'sm')}</button>`) : '';
+    const row = `<div class="frow trow2${e.ignored ? ' dim' : ''}" ${e.dir ? `data-dir="${esc(e.path)}"` : `data-open="${esc(e.path)}" data-wt=""`} style="padding-left:${8 + depth * 16}px">
+      <span class="ficon k-${e.kind}">${ic(e.dir ? 'folder' : KIND_ICON[e.kind] || 'file')}</span>
+      <div class="fmain"><div class="fname">${esc(e.name)}${e.dir ? '/' : ''}</div></div>
+      <div class="fmeta">${e.dir ? '' : `<span class="hint" style="margin:0;font-size:11px">${fmtSize(e.size)}</span>`}${ign}</div></div>`;
+    return row + (open ? await treeHtml(e.path, depth + 1) : '');
+  }));
+  return rows.join('');
+}
+async function changedFilesHtml() {
   const [files] = await Promise.all([api(`/api/sessions/${current.id}/files`), typeof loadSync === 'function' ? loadSync() : null]);
   const syncBar = typeof syncCardHtml === 'function' ? syncCardHtml() : '';
   if (!files.length) return '<div class="pcard"><div class="hint" style="margin:0">Files that agents create or change in this session show up here, with a live preview.</div></div>' + syncBar;
@@ -233,6 +256,15 @@ async function filesListHtml() {
     + (commits.length ? `<div class="psec">Commits</div>${commits.map((x) => `<div class="commit"><i style="background:${agentColor(x.agent)}"></i>${esc(x.c)}</div>`).join('')}` : '');
 }
 $('panelBody').addEventListener('click', async (e) => {
+  const fm = e.target.closest('[data-fmode]');
+  if (fm) { panel.fmode = fm.dataset.fmode; renderPanel(true); return; }
+  const dr = e.target.closest('[data-dir]');
+  if (dr && !e.target.closest('[data-ignore]')) {
+    const d = dr.dataset.dir; panel.openDirs.has(d) ? panel.openDirs.delete(d) : panel.openDirs.add(d);
+    localStorage.setItem('agentscircle:dirs', JSON.stringify([...panel.openDirs])); renderPanel(true); return;
+  }
+  const ig = e.target.closest('[data-ignore]');
+  if (ig) { e.stopPropagation(); ignorePath(ig.dataset.ignore); return; }
   const fa = e.target.closest('[data-fagent]');
   if (fa) { panel.fileAgent = fa.dataset.fagent; renderPanel(); return; }
   // Commit: write the message right here (the desktop app has no prompt() box).
@@ -263,6 +295,14 @@ $('panelBody').addEventListener('click', async (e) => {
   if (row) openFile(row.dataset.open, row.dataset.wt || null);
 });
 
+// Add to .gitignore (and out of git's index if it was already tracked).
+async function ignorePath(p) {
+  if (!confirm(`Add "${p}" to .gitignore so it is never pushed to GitHub?\n\nIf git already tracks it, it is taken out of git; the file stays on your disk.`)) return;
+  try { const r = await api(`/api/sessions/${current.id}/gitignore`, { method: 'POST', body: { path: p } }); if (r.untracked) alert('Done. It is now untracked. Commit to make that final.'); }
+  catch (e) { alert(e.message); return; }
+  if (panel.file === p) { panel.file = null; }
+  renderPanel(true);
+}
 const hasPreview = (info) => ['html', 'image', 'markdown', 'pdf', 'doc', 'sheet', 'slides', 'video', 'audio'].includes(info.kind) || !!info.sheets;
 const EXPORT_LABEL = { docx: ['Word document', '.docx'], pdf: ['PDF', '.pdf'], html: ['Web page', '.html'], xlsx: ['Excel spreadsheet', '.xlsx'], csv: ['CSV', '.csv'] };
 function sheetHtml(info) {
@@ -454,7 +494,7 @@ async function renderFile() {
   body.classList.toggle('editing', panel.view === 'edit');
   body.innerHTML = `<div class="fhead"><button class="ghost ib" id="fBack" data-tip="All files">${ic('back')}</button><div class="fmain"><div class="fname">${esc(baseName(p))}</div><div class="hint" style="margin:0">${panel.wt ? `on @${esc(panel.wt)}'s branch · ` : ''}${dirName(p) ? esc(dirName(p)) + ' · ' : ''}${info.exists ? fmtSize(info.size) : ''}</div></div></div>
     <div class="ftabs">${canPreview ? `<button data-v="preview" class="${panel.view === 'preview' ? 'on' : ''}">Preview</button>` : ''}<button data-v="changes" class="${panel.view === 'changes' ? 'on' : ''}">Changes</button>${canEdit ? `<button data-v="edit" class="${panel.view === 'edit' ? 'on' : ''}${dirty ? ' dirty' : ''}">${ic('pencil', 'sm')}Edit</button>` : info.content != null ? `<button data-v="source" class="${panel.view === 'source' ? 'on' : ''}">Source</button>` : ''}
-      <span style="flex:1"></span>${info.exists ? exportMenuHtml(info) : ''}<div class="exwrap"><button class="ghost ib" data-openmenu data-tip="Open in…" aria-label="Open in" aria-haspopup="menu">${ic('external', 'sm')}</button><div class="cmenu exmenu" role="menu"></div></div></div>
+      <span style="flex:1"></span>${info.exists && !panel.wt && current.isRepo !== false ? `<button class="ghost ib" data-ignore="${esc(p)}" data-tip="Never push to GitHub (.gitignore)" aria-label="Add to .gitignore">${ic('eyeOff', 'sm')}</button>` : ''}${info.exists ? exportMenuHtml(info) : ''}<div class="exwrap"><button class="ghost ib" data-openmenu data-tip="Open in…" aria-label="Open in" aria-haspopup="menu">${ic('external', 'sm')}</button><div class="cmenu exmenu" role="menu"></div></div></div>
     ${panel.exported ? (panel.exported.error
       ? `<div class="exnote err">${esc(panel.exported.error)}${panel.exported.code === 'nopdf' ? ` <a href="${raw}" target="_blank" rel="noopener">Open it to print</a>` : ''}<button class="ghost ib sm" data-exclose aria-label="Dismiss">${ic('x', 'sm')}</button></div>`
       : `<div class="exnote">${ic('check', 'sm')}<span>Saved <b>${esc(panel.exported.name)}</b>${panel.exported.inside ? '' : ' outside the project'}.</span><span style="flex:1"></span>${panel.exported.inside ? `<button class="linkbtn" data-exshow="${esc(panel.exported.path)}">Show</button><button class="linkbtn" data-exopen="${esc(panel.exported.path)}">Open</button>` : `<button class="linkbtn" data-exreveal="${esc(panel.exported.full)}">Show in folder</button>`}<button class="ghost ib sm" data-exclose aria-label="Dismiss">${ic('x', 'sm')}</button></div>`) : ''}

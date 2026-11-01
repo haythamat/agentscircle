@@ -1008,7 +1008,7 @@ function routeMentions(s, msg) {
     else targets.push(id);
   }
   targets = [...new Set(targets)];
-  if (!targets.length && s.defaultAgent) targets = [s.defaultAgent];
+  if (!targets.length) { const d = s.members.includes(s.defaultAgent) ? s.defaultAgent : s.members[0]; if (d) targets = [d]; }
 
   const problems = [];
   for (const id of targets) {
@@ -1382,7 +1382,7 @@ app.post('/api/sessions', (req, res) => {
   const members = (req.body.members || []).filter((id) => agentById(id));
   const s = {
     id: uid(), name: (req.body.name || path.basename(folder)).slice(0, 80), folder, members,
-    defaultAgent: members[0] || null, createdAt: now(), updatedAt: now(), messages: [], queue: [], runs: new Map(),
+    defaultAgent: members.includes(appSettings.get().defaultAgent) ? appSettings.get().defaultAgent : members[0] || null, createdAt: now(), updatedAt: now(), messages: [], queue: [], runs: new Map(),
   };
   if (typeof req.body.context === 'string' && req.body.context.trim()) s.context = { text: req.body.context.trim().slice(0, CONTEXT_TEXT_CAP), files: [] };
   sessions.set(s.id, s);
@@ -1528,7 +1528,10 @@ app.patch('/api/sessions/:id', (req, res) => {
   const s = getSession(req, res); if (!s) return;
   if (Array.isArray(req.body.members)) s.members = req.body.members.filter((id) => agentById(id));
   if (req.body.name) s.name = String(req.body.name).slice(0, 80);
-  if ('defaultAgent' in req.body) s.defaultAgent = req.body.defaultAgent || null;
+  if ('defaultAgent' in req.body) {
+    s.defaultAgent = req.body.defaultAgent || null;
+    if (s.defaultAgent) appSettings.set({ defaultAgent: s.defaultAgent }); // new sessions start with it too
+  }
   if ('handoffs' in req.body) s.handoffs = !!req.body.handoffs;
   if ('mode' in req.body) {
     if (busy(s)) return res.status(409).json({ error: 'Wait until the agents finish before switching mode.' });
@@ -2069,6 +2072,60 @@ app.get('/api/sessions/:id/files', (req, res) => {
     if (cand.length) { const r = spawn.sync('git', ['check-ignore', '--stdin'], { cwd: s.folder, input: cand.join('\n'), encoding: 'utf8', windowsHide: true }); ignored = new Set((r.stdout || '').split(/\r?\n/).filter(Boolean)); }
   }
   res.json(list.map((f) => ({ ...f, uncommitted: !f.wt && snap ? snap.files.has(f.path) : null, ignored: ignored.has(f.path) || undefined })));
+});
+
+
+// The folder's own files, one level at a time, for the Files tab's "All files" view.
+app.get('/api/sessions/:id/tree', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const rel = String(req.query.dir || '');
+  const wt = req.query.wt ? String(req.query.wt) : null;
+  const base = rel ? safePath(s, rel, wt) : baseFor(s, wt);
+  if (!base) return res.status(400).json({ error: 'That folder is outside the project.' });
+  let names;
+  try { names = fs.readdirSync(base, { withFileTypes: true }); } catch (e) { return res.status(400).json({ error: `Can't read that folder: ${e.message}` }); }
+  names = names.filter((d) => d.name !== '.git' && d.name !== '.DS_Store');
+  const entries = names.map((d) => {
+    const p = rel ? `${rel}/${d.name}` : d.name;
+    let dir = d.isDirectory(), size = null;
+    if (d.isSymbolicLink()) { try { dir = fs.statSync(path.join(base, d.name)).isDirectory(); } catch { /* broken link */ } }
+    if (!dir) { try { size = fs.statSync(path.join(base, d.name)).size; } catch { /* gone */ } }
+    return { name: d.name, path: p, dir, size, kind: dir ? 'dir' : kindOf(d.name) };
+  }).sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name)).slice(0, 1000);
+  let ignored = new Set();
+  if (entries.length && checkpoints.isRepo(s.folder)) {
+    const r = spawn.sync('git', ['check-ignore', '--stdin'], { cwd: baseFor(s, wt), input: entries.map((e) => e.path).join('\n'), encoding: 'utf8', windowsHide: true });
+    ignored = new Set((r.stdout || '').split(/\r?\n/).filter(Boolean));
+  }
+  res.json({ dir: rel, entries: entries.map((e) => ({ ...e, ignored: ignored.has(e.path) || undefined })), isRepo: checkpoints.isRepo(s.folder) });
+});
+
+// Add a file or folder to .gitignore so it never reaches GitHub. A file git already tracks is
+// taken out of git's index (the file itself stays on disk), otherwise ignoring it would do nothing.
+app.post('/api/sessions/:id/gitignore', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const rel = String((req.body || {}).path || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const full = rel && safePath(s, rel, null);
+  if (!full) return res.status(400).json({ error: 'That path is outside the project.' });
+  if (!checkpoints.isRepo(s.folder)) return res.status(400).json({ error: 'This folder isn\'t a git repository, so there is nothing to ignore yet.' });
+  if (/[\r\n]/.test(rel)) return res.status(400).json({ error: 'That file name can\'t be added.' });
+  let isDir = false; try { isDir = fs.statSync(full).isDirectory(); } catch { /* may be deleted */ }
+  const root = (spawn.sync('git', ['rev-parse', '--show-toplevel'], { cwd: s.folder, encoding: 'utf8', windowsHide: true }).stdout || '').trim() || s.folder;
+  const fromRoot = path.relative(fs.realpathSync(root), fs.realpathSync(s.folder)).split(path.sep).filter(Boolean).concat(rel.split('/')).join('/');
+  const pattern = '/' + fromRoot.replace(/([\\*?\[#!\s])/g, '\\$1') + (isDir ? '/' : '');
+  const file = path.join(root, '.gitignore');
+  let text = ''; try { text = fs.readFileSync(file, 'utf8'); } catch { /* new file */ }
+  const had = text.split(/\r?\n/).some((l) => l.trim() === pattern || l.trim() === pattern.replace(/\/$/, ''));
+  if (!had) fs.writeFileSync(file, text + (text && !text.endsWith('\n') ? '\n' : '') + pattern + '\n');
+  let untracked = false;
+  const git = (args) => spawn.sync('git', args, { cwd: s.folder, encoding: 'utf8', windowsHide: true });
+  if (git(['ls-files', '--', rel]).stdout.trim()) {
+    const r = git(['rm', '-r', '--cached', '--quiet', '--', rel]);
+    if (r.status !== 0) return res.status(400).json({ error: (r.stderr || 'git rm --cached failed').trim() });
+    untracked = true;
+  }
+  addMessage(s, { role: 'system', kind: 'hint', text: `You added \`${fromRoot}${isDir ? '/' : ''}\` to .gitignore${untracked ? ' and took it out of git (the file stays on your disk). Commit to make that final' : ''}. It won't be pushed to GitHub.` });
+  res.json({ ok: true, pattern, added: !had, untracked });
 });
 
 // Commit only the files one agent changed in this session (shared folder).
