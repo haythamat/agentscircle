@@ -59,6 +59,7 @@ const usageCounts = require('./usage-counts')({ dataDir: DATA_DIR, settings: app
 const skills = require('./skills')({ dataDir: DATA_DIR, accounts });
 const worktrees = require('./worktrees')({ dataDir: DATA_DIR });
 const conversations = require('./conversations')({ accounts });
+const shareImport = require('./share-import');
 const usage = require('./usage')({ accounts });
 const health = require('./health')({ accounts });
 const models = require('./models')({ accounts });
@@ -1525,6 +1526,27 @@ app.get('/api/conversations', (req, res) => {
   const folder = path.resolve(expandHome(String(req.query.folder || '').trim().replace(/^["']|["']$/g, '')));
   if (!req.query.folder || !fs.existsSync(folder)) return res.json([]);
   try { res.json(conversations.list(folder)); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// A share link (claude.ai/share/…, chatgpt.com/s/…): download the conversation, save any artifacts as files.
+app.post('/api/sessions/:id/import-link', async (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  try {
+    const c = await shareImport.fetchShare((req.body || {}).url, { browserFetch: global.agentscircleBrowserFetch });
+    const slug = (c.title || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'chat';
+    const rel = path.join('imported-artifacts', slug), saved = [];
+    for (const a of c.artifacts) {
+      const dest = path.join(s.folder, rel, path.basename(a.name));
+      try { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.writeFileSync(dest, a.content); saved.push(path.join(rel, path.basename(a.name))); } catch { /* skip */ }
+    }
+    const importId = uid();
+    const users = c.msgs.filter((m) => m.role === 'user').length;
+    const head = addMessage(s, { role: 'system', kind: 'import', importId, tool: c.tool, count: c.msgs.length,
+      text: `Brought in "${c.title}" from ${c.source} (${c.msgs.length} messages, ${users} from you). Every agent in this circle now has it as context.`
+        + (saved.length ? `\n\nArtifacts from it were saved into ${rel}/ so the agents can open and edit them:\n${saved.map((f) => '- ' + f).join('\n')}` : '') });
+    for (const m of c.msgs) s.messages.push({ id: uid(), at: m.at || now(), role: 'external', from: m.role === 'assistant' ? 'agent' : 'user', tool: c.tool, importId, text: m.text });
+    s.updatedAt = now(); saveSession(s); broadcast(s.id, { type: 'reload' });
+    res.json({ importId, count: c.msgs.length, head: head.id });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 // A chat from claude.ai (or anywhere) that isn't on disk: the user pastes the text.
 app.post('/api/sessions/:id/import-text', (req, res) => {

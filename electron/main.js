@@ -181,6 +181,21 @@ app.whenReady().then(async () => {
     app.exit(1);
     return;
   }
+  // Share-link import: claude.ai and chatgpt.com refuse plain requests (bot check), so load the page in a
+  // hidden window first and call the API from inside it, where the check has been passed.
+  global.agentscircleBrowserFetch = async (pageUrl, apiUrl) => {
+    const w = new BrowserWindow({ show: false, width: 900, height: 700, webPreferences: { sandbox: true, contextIsolation: true } });
+    try {
+      await Promise.race([w.loadURL(pageUrl), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25000))]);
+      for (let i = 0; i < 12; i++) {
+        const r = await w.webContents.executeJavaScript(`fetch(${JSON.stringify(apiUrl)}, { credentials: 'include', headers: { accept: 'application/json' } }).then(async (r) => ({ status: r.status, body: await r.text() })).catch(() => null)`);
+        if (r && r.status === 200 && /^\s*[\[{]/.test(r.body)) return r;
+        if (r && r.status === 404) return r;
+        await new Promise((ok) => setTimeout(ok, 1500)); // bot check may still be running
+      }
+      return null;
+    } finally { if (!w.isDestroyed()) w.destroy(); }
+  };
   setupUpdates();
   buildMenu();
   createWindow();

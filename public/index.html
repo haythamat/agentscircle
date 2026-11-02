@@ -164,8 +164,11 @@
     <h3>Bring in a conversation</h3>
     <p class="lead">Conversations from Claude Code or Codex in this project's folder, and Claude Desktop (Cowork) sessions. The messages join this circle, so every agent here can continue from them. Files a Cowork session made are copied into the project.</p>
     <div class="convlist" id="iConvs"></div>
-    <details id="iPasteBox" style="margin-top:10px"><summary>Chat on claude.ai? Paste it instead</summary>
-      <p class="hint">Chats on claude.ai live on Anthropic's servers, so they can't be found automatically. Copy the conversation and paste it here. To bring artifacts, download them from Claude and drop them into the project folder.</p>
+    <label for="iLink" style="margin-top:10px">Or paste a share link</label>
+    <input id="iLink" placeholder="https://claude.ai/share/…  or  https://chatgpt.com/s/…" autocomplete="off" spellcheck="false" style="width:100%">
+    <p class="hint">Works with claude.ai share links and ChatGPT or Codex share links. Artifacts from a Claude chat are saved into the project.</p>
+    <details id="iPasteBox" style="margin-top:6px"><summary>Link not working? Paste the text instead</summary>
+      <p class="hint">Copy the conversation and paste it here. To bring artifacts, download them from Claude and drop them into the project folder.</p>
       <input id="iPasteTitle" placeholder="Name (optional)" style="width:100%;margin-bottom:6px">
       <textarea id="iPaste" rows="6" style="width:100%" placeholder="Paste the conversation text"></textarea></details>
     <div class="err" id="iErr"></div>
@@ -735,7 +738,7 @@ async function loadFolderConvs() {
 let iConvRef = null;
 $('importBtn').onclick = async () => {
   if (!current) return;
-  iConvRef = null; $('iErr').textContent = ''; $('iGo').disabled = true; $('iPaste').value = ''; $('iPasteTitle').value = ''; $('iPasteBox').open = false;
+  iConvRef = null; $('iErr').textContent = ''; $('iGo').disabled = true; $('iPaste').value = ''; $('iLink').value = ''; $('iPasteTitle').value = ''; $('iPasteBox').open = false;
   $('iConvs').innerHTML = '<div class="hint" style="padding:10px">Looking for conversations…</div>';
   $('impModal').classList.add('open');
   let list = [];
@@ -747,13 +750,18 @@ $('importBtn').onclick = async () => {
   draw();
 };
 $('iCancel').onclick = () => $('impModal').classList.remove('open');
-$('iPaste').addEventListener('input', () => { $('iGo').disabled = !$('iPaste').value.trim() && !iConvRef; });
+const iCanGo = () => { $('iGo').disabled = !$('iPaste').value.trim() && !$('iLink').value.trim() && !iConvRef; };
+$('iPaste').addEventListener('input', iCanGo);
+$('iLink').addEventListener('input', iCanGo);
 $('iGo').onclick = async () => {
   try {
-    const pasted = $('iPaste').value.trim();
-    const r = pasted ? await api(`/api/sessions/${current.id}/import-text`, { method: 'POST', body: { text: pasted, title: $('iPasteTitle').value } })
+    const pasted = $('iPaste').value.trim(), link = $('iLink').value.trim();
+    $('iErr').textContent = ''; if (link) { $('iGo').disabled = true; $('iGo').textContent = 'Fetching…'; }
+    const r = link ? await api(`/api/sessions/${current.id}/import-link`, { method: 'POST', body: { url: link } })
+      : pasted ? await api(`/api/sessions/${current.id}/import-text`, { method: 'POST', body: { text: pasted, title: $('iPasteTitle').value } })
       : await api(`/api/sessions/${current.id}/import`, { method: 'POST', body: { ref: iConvRef } }); $('impModal').classList.remove('open'); }
   catch (e) { $('iErr').textContent = e.message; }
+  finally { $('iGo').textContent = 'Bring it in'; iCanGo(); }
 };
 
 // ---- permission levels ----
