@@ -2,6 +2,8 @@
 // transcripts to disk) and turn one into chat messages, so a circle can continue it.
 //   Claude Code: <config dir>/projects/<folder with symbols as ->/<session id>.jsonl
 //   Codex:       <CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl
+//   Claude Desktop (Cowork): <app data>/Claude/local-agent-mode-sessions/*/*/local_<id>.json
+//                with the transcript in local_<id>/audit.jsonl and the files it made in local_<id>/outputs/
 // Only text between you and the agent is kept; tool calls and their output are left out.
 
 const fs = require('fs');
@@ -12,6 +14,8 @@ const crypto = require('crypto');
 const MAX_FILE = 60 * 1024 * 1024;   // skip transcripts bigger than this
 const CODEX_DAYS = 120;              // how far back to look for Codex sessions
 const PER_MESSAGE = 12000;           // longest single message kept
+const MAX_OUT_FILES = 200;           // files copied from a Cowork session's outputs
+const MAX_OUT_FILE = 25 * 1024 * 1024;
 
 module.exports = function conversations({ accounts }) {
   const refs = new Map(); // opaque id -> { file, kind, source }
@@ -160,6 +164,56 @@ module.exports = function conversations({ accounts }) {
     return out;
   }
 
+  // ---------- Claude Desktop: Cowork sessions ----------
+  // They run in a VM, so they aren't tied to a project folder; offer all of them. Chats on
+  // claude.ai itself live on Anthropic's servers and can't be read from disk.
+  function coworkRoot() {
+    const home = os.homedir();
+    const dir = process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'Claude')
+      : process.platform === 'win32' ? path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Claude')
+      : path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Claude');
+    const root = path.join(dir, 'local-agent-mode-sessions');
+    return fs.existsSync(root) ? root : null;
+  }
+  const subdirs = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((x) => x.isDirectory()).map((x) => path.join(d, x.name)); } catch { return []; } };
+  function outputFiles(dir) {
+    const out = [];
+    const walk = (d, depth) => {
+      let names = []; try { names = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const n of names) {
+        const p = path.join(d, n.name);
+        if (n.isDirectory()) { if (depth < 4) walk(p, depth + 1); continue; }
+        if (!n.isFile() || out.length >= MAX_OUT_FILES) continue;
+        try { if (fs.statSync(p).size <= MAX_OUT_FILE) out.push(p); } catch { /* gone */ }
+      }
+    };
+    walk(dir, 0);
+    return out;
+  }
+  function listCowork() {
+    const out = []; const root = coworkRoot(); if (!root) return out;
+    for (const a of subdirs(root)) for (const b of subdirs(a)) {
+      let names = []; try { names = fs.readdirSync(b); } catch { continue; }
+      for (const n of names.filter((x) => /^local_[\w-]+\.json$/.test(x))) {
+        const meta = parse(fs.readFileSync(path.join(b, n), 'utf8')); if (!meta) continue;
+        const sdir = path.join(b, n.replace(/\.json$/, ''));
+        const file = path.join(sdir, 'audit.jsonl');
+        try {
+          const c = readClaude(file); if (!c) continue;
+          const users = c.msgs.filter((m) => m.role === 'user');
+          if (!users.length || isOurs(users[0].text)) continue;
+          const e = entry('cowork', 'Claude Desktop (Cowork)', file, c);
+          if (meta.title) e.title = String(meta.title).slice(0, 140);
+          e.files = outputFiles(path.join(sdir, 'outputs')).length;
+          refs.get(e.ref).outputs = path.join(sdir, 'outputs'); refs.get(e.ref).title = meta.title || e.title;
+          e.resume = null;
+          out.push(e);
+        } catch { /* no transcript yet */ }
+      }
+    }
+    return out;
+  }
+
   function entry(kind, source, file, c) {
     const ref = crypto.createHash('sha256').update(file).digest('hex').slice(0, 20);
     refs.set(ref, { file, kind, source });
@@ -170,13 +224,13 @@ module.exports = function conversations({ accounts }) {
       title: firstUser.text.replace(/\s+/g, ' ').slice(0, 140),
       messages: c.msgs.filter((m) => m.role !== 'summary').length,
       updatedAt: new Date(st.mtimeMs).toISOString(),
-      resume: kind === 'claude' ? `claude --resume ${c.id}` : `codex resume ${c.id}`,
+      resume: kind === 'claude' ? `claude --resume ${c.id}` : kind === 'codex' ? `codex resume ${c.id}` : null,
     };
   }
 
   // Everything found for one project folder, newest first.
   function list(folder) {
-    const all = [...listClaude(folder), ...listCodex(folder)];
+    const all = [...listClaude(folder), ...listCodex(folder), ...listCowork()];
     return all.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 50);
   }
 
@@ -184,11 +238,12 @@ module.exports = function conversations({ accounts }) {
   function read(ref) {
     const r = refs.get(ref);
     if (!r) throw new Error('That conversation is no longer in the list. Open the list again.');
-    const c = r.kind === 'claude' ? readClaude(r.file) : readCodex(r.file, false);
+    const c = r.kind === 'codex' ? readCodex(r.file, false) : readClaude(r.file);
     if (!c) throw new Error('That conversation is too large to bring in.');
-    const tool = r.kind === 'claude' ? 'Claude Code' : 'Codex';
+    const tool = r.kind === 'codex' ? 'Codex' : r.kind === 'cowork' ? 'Claude Desktop' : 'Claude Code';
     const msgs = c.msgs.map((m) => ({ ...m, text: m.text.length > PER_MESSAGE ? m.text.slice(0, PER_MESSAGE) + '\n…(cut)' : m.text }));
-    return { tool, source: r.source, sessionId: c.id, msgs };
+    const files = r.outputs ? outputFiles(r.outputs).map((f) => ({ abs: f, rel: path.relative(r.outputs, f) })) : [];
+    return { tool, source: r.source, sessionId: c.id, msgs, title: r.title || '', files };
   }
 
   return { list, read };

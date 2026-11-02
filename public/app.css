@@ -993,3 +993,9 @@ button.ign-on:hover, button.ghost.ign-on:hover { filter: brightness(1.1); }
 .frow:hover .ignbtn, .frow:focus-within .ignbtn { opacity: 1; }
 @media (hover: none) { .frow .ignbtn { opacity: 1; } }
 .stopedit { margin-left: 10px; font-size: 12px; }
+
+.aiedit { margin-top: 10px; padding: 8px; border: 1px solid var(--line, var(--border)); border-radius: var(--r); }
+.aiedit-row { display: flex; gap: 6px; } .aiedit-row input { flex: 1; min-width: 0; } .aiedit-row select { max-width: 110px; }
+
+.aipick{display:flex;align-items:center;gap:8px;margin:0 0 6px;flex-wrap:wrap}
+.pickchip{background:var(--accent-soft,rgba(108,140,255,.15));border-radius:6px;padding:2px 8px;font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

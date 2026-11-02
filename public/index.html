@@ -162,8 +162,12 @@
 <div class="modal" id="impModal">
   <div class="card">
     <h3>Bring in a conversation</h3>
-    <p class="lead">Conversations you had in Claude Code or Codex in this project's folder. The messages join this circle, so every agent here can continue from them.</p>
+    <p class="lead">Conversations from Claude Code or Codex in this project's folder, and Claude Desktop (Cowork) sessions. The messages join this circle, so every agent here can continue from them. Files a Cowork session made are copied into the project.</p>
     <div class="convlist" id="iConvs"></div>
+    <details id="iPasteBox" style="margin-top:10px"><summary>Chat on claude.ai? Paste it instead</summary>
+      <p class="hint">Chats on claude.ai live on Anthropic's servers, so they can't be found automatically. Copy the conversation and paste it here. To bring artifacts, download them from Claude and drop them into the project folder.</p>
+      <input id="iPasteTitle" placeholder="Name (optional)" style="width:100%;margin-bottom:6px">
+      <textarea id="iPaste" rows="6" style="width:100%" placeholder="Paste the conversation text"></textarea></details>
     <div class="err" id="iErr"></div>
     <div class="actions"><button id="iCancel">Cancel</button><button class="primary" id="iGo" disabled>Bring it in</button></div>
   </div>
@@ -709,9 +713,9 @@ function ago(iso) {
   return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 function convListHtml(list, selected) {
-  return list.map(c => `<div class="conv${c.ref === selected ? ' sel' : ''}" data-ref="${c.ref}" title="${esc(c.source)} · ${esc(c.resume)}">
-    <span class="k">${c.kind === 'claude' ? 'Claude Code' : 'Codex'}</span>
-    <span class="t">${esc(c.title)}</span><span class="m">${c.messages} msgs · ${ago(c.updatedAt)}</span></div>`).join('');
+  return list.map(c => `<div class="conv${c.ref === selected ? ' sel' : ''}" data-ref="${c.ref}" title="${esc(c.source)}${c.resume ? ' · ' + esc(c.resume) : ''}">
+    <span class="k">${{ claude: 'Claude Code', codex: 'Codex', cowork: 'Claude Desktop' }[c.kind] || c.kind}</span>
+    <span class="t">${esc(c.title)}</span><span class="m">${c.messages} msgs${c.files ? ` · ${c.files} file${c.files > 1 ? 's' : ''}` : ''} · ${ago(c.updatedAt)}</span></div>`).join('');
 }
 let fConvRef = null, fConvTimer = null;
 async function loadFolderConvs() {
@@ -731,7 +735,7 @@ async function loadFolderConvs() {
 let iConvRef = null;
 $('importBtn').onclick = async () => {
   if (!current) return;
-  iConvRef = null; $('iErr').textContent = ''; $('iGo').disabled = true;
+  iConvRef = null; $('iErr').textContent = ''; $('iGo').disabled = true; $('iPaste').value = ''; $('iPasteTitle').value = ''; $('iPasteBox').open = false;
   $('iConvs').innerHTML = '<div class="hint" style="padding:10px">Looking for conversations…</div>';
   $('impModal').classList.add('open');
   let list = [];
@@ -743,8 +747,12 @@ $('importBtn').onclick = async () => {
   draw();
 };
 $('iCancel').onclick = () => $('impModal').classList.remove('open');
+$('iPaste').addEventListener('input', () => { $('iGo').disabled = !$('iPaste').value.trim() && !iConvRef; });
 $('iGo').onclick = async () => {
-  try { const r = await api(`/api/sessions/${current.id}/import`, { method: 'POST', body: { ref: iConvRef } }); $('impModal').classList.remove('open'); }
+  try {
+    const pasted = $('iPaste').value.trim();
+    const r = pasted ? await api(`/api/sessions/${current.id}/import-text`, { method: 'POST', body: { text: pasted, title: $('iPasteTitle').value } })
+      : await api(`/api/sessions/${current.id}/import`, { method: 'POST', body: { ref: iConvRef } }); $('impModal').classList.remove('open'); }
   catch (e) { $('iErr').textContent = e.message; }
 };
 

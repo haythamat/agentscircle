@@ -1392,13 +1392,31 @@ app.post('/api/sessions', (req, res) => {
   res.json(summary(s));
 });
 
-// Bring a conversation from Claude Code or Codex into a circle.
+// Files a brought-in conversation produced (Cowork outputs) are copied into the project,
+// where the Files tab shows them and any agent can edit them.
+function copyImportedFiles(s, c) {
+  const res = { dir: '', list: [], length: 0 };
+  if (!c.files || !c.files.length) return res;
+  const slug = (c.title || c.sessionId || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'chat';
+  const rel = path.join('imported-artifacts', slug);
+  for (const f of c.files) {
+    const dest = path.join(s.folder, rel, f.rel);
+    if (!path.resolve(dest).startsWith(path.resolve(s.folder, rel) + path.sep)) continue;
+    try { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.copyFileSync(f.abs, dest); res.list.push(path.join(rel, f.rel)); } catch { /* skip unreadable file */ }
+  }
+  res.dir = rel; res.length = res.list.length;
+  return res;
+}
+
+// Bring a conversation from Claude Code, Codex or Claude Desktop into a circle.
 function importConversation(s, ref) {
   const c = conversations.read(ref);
   const importId = uid();
   const users = c.msgs.filter((m) => m.role === 'user').length;
+  const copied = copyImportedFiles(s, c);
   const head = addMessage(s, { role: 'system', kind: 'import', importId, tool: c.tool, count: c.msgs.length,
-    text: `Brought in a conversation from ${c.source} (${c.msgs.length} messages, ${users} from you). Every agent in this circle now has it as context.` });
+    text: `Brought in a conversation from ${c.source} (${c.msgs.length} messages, ${users} from you). Every agent in this circle now has it as context.`
+      + (copied.length ? `\n\nFiles it made were copied into ${copied.dir}/ so the agents can open and edit them:\n${copied.list.map((f) => '- ' + f).join('\n')}` : '') });
   for (const m of c.msgs) {
     s.messages.push({ id: uid(), at: m.at || now(), role: 'external', from: m.role === 'assistant' ? 'agent' : m.role, tool: c.tool, importId, text: m.text });
   }
@@ -1507,6 +1525,19 @@ app.get('/api/conversations', (req, res) => {
   const folder = path.resolve(expandHome(String(req.query.folder || '').trim().replace(/^["']|["']$/g, '')));
   if (!req.query.folder || !fs.existsSync(folder)) return res.json([]);
   try { res.json(conversations.list(folder)); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// A chat from claude.ai (or anywhere) that isn't on disk: the user pastes the text.
+app.post('/api/sessions/:id/import-text', (req, res) => {
+  const s = getSession(req, res); if (!s) return;
+  const text = String((req.body || {}).text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Paste the conversation text first.' });
+  const title = String((req.body || {}).title || '').trim().slice(0, 80) || 'Pasted conversation';
+  const importId = uid();
+  const head = addMessage(s, { role: 'system', kind: 'import', importId, tool: 'Pasted', count: 1,
+    text: `Brought in "${title}" as pasted text. Every agent in this circle now has it as context.` });
+  s.messages.push({ id: uid(), at: now(), role: 'external', from: 'agent', tool: 'Pasted', importId, text: text.length > 60000 ? text.slice(0, 60000) + '\n…(cut)' : text });
+  s.updatedAt = now(); saveSession(s); broadcast(s.id, { type: 'reload' });
+  res.json({ importId, count: 1, head: head.id });
 });
 app.post('/api/sessions/:id/import', (req, res) => {
   const s = getSession(req, res); if (!s) return;
@@ -2312,8 +2343,26 @@ app.get(['/api/sessions/:id/raw/*path', '/api/sessions/:id/wt/:wt/raw/*path'], (
   if (!full || !fs.existsSync(full) || !fs.statSync(full).isFile()) return res.status(404).send('Not found');
   // Previews run in a sandboxed frame; this header keeps them from reaching the AgentsCircle API.
   res.set('Content-Security-Policy', "sandbox allow-scripts allow-forms allow-popups; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'");
+  // ?pick=1: add a small script that lets you click an element in an HTML preview and report it to the panel.
+  if (req.query.pick && /\.html?$/i.test(full)) {
+    let html; try { html = fs.readFileSync(full, 'utf8'); } catch { return res.status(404).send('Not found'); }
+    res.type('html');
+    return res.send(html + PICK_SCRIPT);
+  }
   res.sendFile(full, { dotfiles: 'allow' });
 });
+
+const PICK_SCRIPT = `<script>(function(){
+var on=false,hi=null,st=document.createElement('style');
+st.textContent='.__acpick{outline:2px solid #6c8cff!important;outline-offset:1px;cursor:crosshair!important}';
+document.documentElement.appendChild(st);
+function sel(e){var p=[];while(e&&e.nodeType===1&&e!==document.body){var s=e.tagName.toLowerCase();if(e.id){p.unshift(s+'#'+e.id);break}var c=(e.getAttribute('class')||'').split(/\\s+/).filter(function(x){return x&&x!=='__acpick'})[0];if(c)s+='.'+c;var n=0,q=e;while((q=q.previousElementSibling))if(q.tagName===e.tagName)n++;if(n)s+=':nth-of-type('+(n+1)+')';p.unshift(s);e=e.parentElement}return p.join(' > ')}
+function clear(){if(hi){hi.classList.remove('__acpick');hi=null}}
+addEventListener('message',function(m){if(m.data&&m.data.agentscirclePick!==undefined){on=!!m.data.agentscirclePick;if(!on)clear()}});
+document.addEventListener('mouseover',function(e){if(!on)return;clear();hi=e.target;hi.classList.add('__acpick')},true);
+document.addEventListener('click',function(e){if(!on)return;e.preventDefault();e.stopPropagation();var t=e.target;clear();var cl=t.cloneNode(true);cl.classList&&cl.classList.remove('__acpick');
+parent.postMessage({agentscirclePicked:{selector:sel(t),tag:t.tagName.toLowerCase(),text:(t.innerText||'').trim().slice(0,160),html:cl.outerHTML.slice(0,600)}},'*')},true);
+})();<\/script>`;
 
 app.get('/api/sessions/:id/diff', (req, res) => {
   const s = getSession(req, res); if (!s) return;

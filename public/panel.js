@@ -475,7 +475,7 @@ async function renderFile() {
   const raw = `/api/sessions/${current.id}${panel.wt ? `/wt/${panel.wt}` : ''}/raw/${p.split('/').map(encodeURIComponent).join('/')}`;
   let view = '';
   if (!info.exists) view = '<div class="pcard"><div class="hint" style="margin:0">This file was deleted.</div></div>';
-  else if (panel.view === 'preview' && info.kind === 'html') view = `<iframe class="preview" sandbox="allow-scripts allow-forms allow-popups" src="${raw}?t=${Date.now()}"></iframe>`;
+  else if (panel.view === 'preview' && info.kind === 'html') view = `<iframe class="preview" sandbox="allow-scripts allow-forms allow-popups" src="${raw}?pick=1&t=${Date.now()}"></iframe>`;
   else if (panel.view === 'preview' && info.kind === 'pdf') view = `<iframe class="preview" src="${raw}"></iframe>`;
   else if (panel.view === 'preview' && info.kind === 'image') view = `<div class="imgwrap"><img src="${raw}?t=${Date.now()}" alt="${esc(baseName(p))}"></div>`;
   else if (panel.view === 'preview' && info.previewError) view = `<div class="pcard"><div class="err" style="margin:0">${esc(info.previewError)}</div></div>`;
@@ -505,6 +505,7 @@ async function renderFile() {
       ? `<div class="exnote err">${esc(panel.exported.error)}${panel.exported.code === 'nopdf' ? ` <a href="${raw}" target="_blank" rel="noopener">Open it to print</a>` : ''}<button class="ghost ib sm" data-exclose aria-label="Dismiss">${ic('x', 'sm')}</button></div>`
       : `<div class="exnote">${ic('check', 'sm')}<span>Saved <b>${esc(panel.exported.name)}</b>${panel.exported.inside ? '' : ' outside the project'}.</span><span style="flex:1"></span>${panel.exported.inside ? `<button class="linkbtn" data-exshow="${esc(panel.exported.path)}">Show</button><button class="linkbtn" data-exopen="${esc(panel.exported.path)}">Open</button>` : `<button class="linkbtn" data-exreveal="${esc(panel.exported.full)}">Show in folder</button>`}<button class="ghost ib sm" data-exclose aria-label="Dismiss">${ic('x', 'sm')}</button></div>`) : ''}
     <div id="fileView">${view}</div>
+    ${info.exists && panel.view !== 'edit' ? `<div class="aiedit"><div class="hint" style="margin:0 0 4px">Describe a change and an agent will edit <b>${esc(baseName(p))}</b>.</div>${panel.view === 'preview' && info.kind === 'html' ? `<div class="aipick">${panel.pick ? `<span class="pickchip" title="${esc(panel.pick.selector)}">&lt;${esc(panel.pick.tag)}&gt; ${esc(panel.pick.text.slice(0, 40) || panel.pick.selector)}</span><button class="linkbtn" id="aiPickClear">Clear</button>` : ''}<button class="linkbtn" id="aiPickBtn">${panel.picking ? 'Click an element in the preview…' : panel.pick ? 'Pick another' : 'Pick an element to change'}</button></div>` : ''}<div class="aiedit-row"><select id="aiAgent" aria-label="Agent">${current.members.map((id) => `<option value="${esc(id)}"${id === (current.defaultAgent || current.members[0]) ? ' selected' : ''}>@${esc(id)}</option>`).join('')}</select><input id="aiPrompt" placeholder="e.g. make the heading bigger, use another colour…"><button class="primary" id="aiSend">Send</button></div></div>` : ''}
     ${panel.view === 'edit' ? '' : `<div class="psec">History</div>${touches.slice().reverse().map((m) => { const f = m.files.find((x) => x.path === p); return `<div class="trow" data-goto="${m.id}"><span class="sdot ${f.status === 'deleted' ? 'error' : 'done'}"></span><div class="tmain"><b style="color:${agentColor(m.agent)}">@${esc(m.agent)}</b> <span class="hint" style="margin:0">${esc(STATUS_LABEL[f.status].toLowerCase())} · ${new Date(m.endedAt || m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span><div class="hint" style="margin:2px 0 0">${esc(requestFor(m))}</div></div></div>`; }).join('') || '<div class="hint">No agent has changed this file in this session.</div>'}`}`;
   if (panel.view === 'edit') mountEditor();
   $('fBack').onclick = () => { panel.file = null; panel.conflict = null; body.classList.remove('editing'); renderPanel(); };
@@ -517,6 +518,20 @@ async function renderFile() {
   document.querySelectorAll('[data-exclose]').forEach((b) => b.onclick = () => { panel.exported = null; renderFile(); });
   document.querySelectorAll('[data-exshow]').forEach((b) => b.onclick = () => openFile(b.dataset.exshow, panel.wt));
   document.querySelectorAll('[data-exreveal]').forEach((b) => b.onclick = () => api('/api/reveal-path', { method: 'POST', body: { path: b.dataset.exreveal } }).catch(() => {}));
+  const aiGo = () => {
+    const t = $('aiPrompt').value.trim(); if (!t) return;
+    const pk = panel.pick;
+    const target = pk ? `\nTarget element (picked in the preview): \`${pk.selector}\`${pk.text ? `, text "${pk.text.replace(/\s+/g, ' ')}"` : ''}\nIts HTML: ${pk.html}\nChange only that element.` : '';
+    $('input').value = `@${$('aiAgent').value} In \`${p}\`: ${t}${target}\nEdit that file in place and keep the rest as it is.`;
+    panel.pick = null; panel.picking = false;
+    $('aiPrompt').value = ''; $('input').focus(); send();
+  };
+  if ($('aiSend')) { $('aiSend').onclick = aiGo; $('aiPrompt').onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); aiGo(); } }; }
+  const frame = document.querySelector('iframe.preview');
+  const setPicking = (on) => { panel.picking = on; if (frame && frame.contentWindow) frame.contentWindow.postMessage({ agentscirclePick: on }, '*'); };
+  if ($('aiPickBtn')) $('aiPickBtn').onclick = () => { setPicking(!panel.picking); renderFile(); };
+  if ($('aiPickClear')) $('aiPickClear').onclick = () => { panel.pick = null; renderFile(); };
+  if (frame && panel.picking) frame.addEventListener('load', () => setPicking(true));
   const om = document.querySelector('[data-openmenu]');
   if (om) om.onclick = async (ev) => { ev.stopPropagation(); const w = om.parentElement; if (!w.classList.contains('open')) await fillOpenMenu(w.querySelector('.exmenu')); w.classList.toggle('open'); };
   document.querySelectorAll('[data-exopen]').forEach((b) => b.onclick = () => api(`/api/sessions/${current.id}/reveal`, { method: 'POST', body: { path: b.dataset.exopen, open: true, wt: panel.wt } }));
@@ -730,3 +745,13 @@ $('panelExpand').onclick = () => setPanelMax(!psize.max);
 window.addEventListener('resize', () => applyPanelSize());
 new MutationObserver(() => applyPanelSize()).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 applyPanelSize();
+
+window.addEventListener('message', (e) => {
+  const d = e.data && e.data.agentscirclePicked;
+  if (!d || typeof d.selector !== 'string') return;
+  const f = document.querySelector('iframe.preview');
+  if (!f || e.source !== f.contentWindow) return;
+  panel.pick = { selector: String(d.selector).slice(0, 300), tag: String(d.tag || '').slice(0, 20), text: String(d.text || '').slice(0, 160), html: String(d.html || '').slice(0, 600) };
+  panel.picking = false;
+  renderFile();
+});
