@@ -514,7 +514,7 @@ function msgHtml(m) {
   }
   if (m.role === 'handoff') {
     const f = agentMap()[m.agent], t = agentMap()[m.to];
-    return `<div class="msg handoff" id="m-${m.id}"><div class="hoff"><span class="pass">${tile(m.agent, f && f.color, 'sm')}${ic('chevronRight')}${tile(m.to, t && t.color, 'sm')}</span><span><b style="color:var(--text);font-weight:550">@${esc(m.agent)}</b> handed to <b style="color:var(--text);font-weight:550">@${esc(m.to)}</b></span><span class="task">${esc(m.text)}</span></div></div>`;
+    return `<div class="msg handoff" id="m-${m.id}"><div class="hoff"><div class="hoff-head"><span class="pass">${tile(m.agent, f && f.color, 'sm')}${ic('chevronRight')}${tile(m.to, t && t.color, 'sm')}</span><span><b style="color:var(--text);font-weight:550">@${esc(m.agent)}</b> handed to <b style="color:var(--text);font-weight:550">@${esc(m.to)}</b></span></div><div class="task">${esc(m.text)}</div></div></div>`;
   }
   if (m.kind === 'summary') {
     const firstLine = m.text.split('\n')[0].replace(/\*\*/g, '');
