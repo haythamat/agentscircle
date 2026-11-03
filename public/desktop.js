@@ -29,7 +29,25 @@ if (desk) {
   desk.onNewSession(() => $('newBtn').click());
   if (desk.onToggleSidebar) desk.onToggleSidebar(() => setSidebar(!look.sidebar));
   if (desk.onTogglePanel) desk.onTogglePanel(() => { if (typeof openPanel === 'function' && current) (document.body.classList.contains('panel-open') ? closePanel() : openPanel()); });
-  desk.onUpdate(() => { if ($('setAbout') && $('setAbout').style.display !== 'none') loadAbout(); });
+  desk.onUpdate((s) => { announceUpdate(s); if ($('setAbout') && $('setAbout').style.display !== 'none') loadAbout(); });
+}
+
+// ---------- new-release popup ----------
+// Tells the user once per version when a release is found, and again when it is ready to install.
+let lastUpdatePopup = '';
+async function announceUpdate(s) {
+  if (!s.version || !['downloading', 'ready'].includes(s.status)) return;
+  const key = `${s.status}:${s.version}`;
+  if (key === lastUpdatePopup) return;
+  lastUpdatePopup = key;
+  // Wait until the first-run setup or another dialog is closed, so the popup isn't hidden behind it.
+  while ($('setupModal').classList.contains('open') || $('askModal').classList.contains('open')) await new Promise((ok) => setTimeout(ok, 3000));
+  if (s.status === 'downloading') {
+    await askConfirm({ title: `AgentsCircle ${s.version} is available`, body: 'It is downloading now. You will be asked to restart when it is ready. Your sessions, accounts and connectors are kept.', ok: 'OK' });
+    return;
+  }
+  const restart = await askConfirm({ title: `AgentsCircle ${s.version} is ready`, body: 'Restart now to install the new version. If you don\'t, it installs the next time you quit.', ok: 'Restart now' });
+  if (restart) desk.installUpdate();
 }
 
 // ---------- Settings → About ----------
