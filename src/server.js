@@ -1183,6 +1183,26 @@ app.post('/api/plan/token', (req, res) => {
   const ok = entitlements.setToken(req.body && req.body.token);
   res.status(ok ? 200 : 400).json(ok ? { ok: true, ...entitlements.status() } : { ok: false, error: 'That plan token is not valid.' });
 });
+// Optional account sign-in (GitHub). The browser signs in; Supabase redirects back to /auth/callback.
+const account = require('./account')({ url: (PKG.agentscircle && PKG.agentscircle.supabaseUrl) || '', anonKey: (PKG.agentscircle && PKG.agentscircle.supabaseKey) || '', port: PORT, vault, entitlements });
+app.get('/api/account', (_req, res) => res.json(account.state()));
+app.post('/api/account/signin', (req, res) => {
+  try { res.json({ url: account.begin(String((req.body || {}).provider || 'github')) }); } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/account/signout', (_req, res) => { account.signOut(); res.json(account.state()); });
+app.post('/api/account/refresh', async (_req, res) => {
+  try { await account.refreshPlan(); } catch (e) { return res.status(400).json({ error: e.message, ...account.state() }); }
+  res.json(account.state());
+});
+app.get('/auth/callback', async (req, res) => {
+  const page = (title, msg) => res.type('html').send(`<!doctype html><meta charset="utf-8"><title>AgentsCircle</title><body style="font:16px system-ui;background:#111;color:#eee;display:grid;place-items:center;height:100vh;margin:0"><div style="text-align:center"><h2>${title}</h2><p>${msg}</p></div>`);
+  try {
+    const q = req.query; // never echo provider error text unescaped
+    if (q.error) { await account.callback({ state: q.state }).catch(() => {}); return page('Sign-in failed', 'The provider returned an error. You can close this tab and try again.'); }
+    await account.callback({ code: String(q.code || ''), state: String(q.state || '') });
+    page('You are signed in', 'You can close this tab and go back to AgentsCircle.');
+  } catch (e) { page('Sign-in failed', String(e.message).replace(/[<>&]/g, '')); }
+});
 app.get('/api/plan/export',(_req, res) => res.json(entitlements.exportData()));
 app.delete('/api/plan/data', (_req, res) => res.json(entitlements.deleteData()));
 app.get('/api/agents', (_req, res) => res.json(agentsPayload()));

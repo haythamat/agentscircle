@@ -51,6 +51,8 @@
     "toolsPublicKey": "",
     "_readme": "toolsUrl: raw URL of tools.json in your repo (e.g. https://raw.githubusercontent.com/haythamat/agentscircle/main/tools.json). toolsPublicKey: printed by npm run tools:keygen. Leave empty to turn signed agent-settings fixes off.",
     "usageUrl": "https://agentscircle.dev/api/public/usage",
+    "supabaseUrl": "https://zjyqzugesdtgsqfbwjaq.supabase.co",
+    "supabaseKey": "sb_publishable_aOhNKWqELRqCHnl6Bxpk0w_WfEnSc6p",
     "planKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAYDScBAgkFYL3xOdnZdGDPCLOTezeDRIjHwLUq6701Vk=\n-----END PUBLIC KEY-----"
   },
   "build": {

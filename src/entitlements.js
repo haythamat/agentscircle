@@ -36,6 +36,10 @@ module.exports = function createEntitlements({ dataDir, settings, publicKey = ''
   try { cached = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* signed out */ }
   if (!cached || typeof cached !== 'object' || typeof cached.token !== 'string') cached = null;
 
+  // Once the account module is attached, a token only counts for the account signed in right now.
+  let accountId = null;
+  const owned = (p) => !accountId || (!!p.sub && p.sub === accountId());
+
   // Signed issuance and expiry are mandatory. Lifetime comes from the signed values only.
   const timed = (p) => Number.isFinite(p.issuedAt) && Number.isFinite(p.expiresAt) && p.expiresAt > p.issuedAt
     && p.expiresAt - p.issuedAt <= OFFLINE_GRACE_DAYS * DAY;
@@ -49,6 +53,7 @@ module.exports = function createEntitlements({ dataDir, settings, publicKey = ''
     if (!cached) return free;
     const p = decode(cached.token, publicKey);
     if (!p || !ORDER.includes(p.plan)) return free;
+    if (!owned(p)) return { ...free, reason: 'signed-out' };
     const t = now();
     if (!timed(p) || !OK_STATUS.has(p.status)) return free;
     const out = { plan: p.plan, status: p.status, founding: !!p.founding, signedIn: true, verifiedAt: p.issuedAt, expiresAt: p.expiresAt };
@@ -68,13 +73,13 @@ module.exports = function createEntitlements({ dataDir, settings, publicKey = ''
     return false;
   }
 
-  // Store a token from the server. Rejected unless signed, well-formed, unexpired and not older than the cached one.
+  // Store a token from the server. Rejected unless signed, well-formed, unexpired, for the signed-in account and not older than its cached one.
   function setToken(token) {
     const p = decode(token, publicKey);
-    if (!p || !ORDER.includes(p.plan) || !timed(p) || !OK_STATUS.has(p.status)) return false;
+    if (!p || !ORDER.includes(p.plan) || !timed(p) || !OK_STATUS.has(p.status) || !owned(p)) return false;
     if (now() > p.expiresAt || p.issuedAt > now() + CLOCK_SKEW) return false;
     const old = cached && decode(cached.token, publicKey);
-    if (old && Number.isFinite(old.issuedAt) && p.issuedAt < old.issuedAt) return false; // never go back to an older token
+    if (old && old.sub === p.sub && Number.isFinite(old.issuedAt) && p.issuedAt < old.issuedAt) return false; // never go back to an older token
     cached = { token };
     save();
     return true;
@@ -90,5 +95,5 @@ module.exports = function createEntitlements({ dataDir, settings, publicKey = ''
     return { ok: true, local: 'Cached plan removed. Sessions and files on this computer were not touched.', cloud: 'Cloud deletion is not available yet (no sync backend).' };
   }
 
-  return { can, status, setToken, clear, exportData, deleteData, enabled, features: { free: [...FREE], pro: [...PRO], teams: [...TEAMS] } };
+  return { can, status, setToken, clear, exportData, deleteData, enabled, bindAccount: (fn) => { accountId = fn; }, features: { free: [...FREE], pro: [...PRO], teams: [...TEAMS] } };
 };

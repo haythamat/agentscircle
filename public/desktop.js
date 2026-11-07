@@ -82,6 +82,33 @@ function setupStatusHtml(st, list) {
     </div>`;
 }
 
+function accountHtml(a) {
+  if (!a.configured) return '';
+  const body = a.signedIn
+    ? `<div>Signed in as <b>${esc(a.user.name || a.user.email)}</b>${a.user.name && a.user.email ? ` <span class="hint">(${esc(a.user.email)})</span>` : ''}</div>
+       <div class="hint">Your account only adds optional paid features. Everything local works without it.${a.keychain ? '' : ' The sign-in is kept for this run only.'}</div>
+       <div style="display:flex;gap:6px;margin-top:8px"><button id="acctRefresh" style="padding:4px 10px;font-size:12px">Refresh plan</button><button id="acctOut" style="padding:4px 10px;font-size:12px">Sign out</button></div>`
+    : `<div class="hint" style="margin:0 0 8px">Optional. Sign in to use paid plans later. The free app works fully without it.</div>
+       <button class="primary" id="acctGithub">Sign in with GitHub</button>`;
+  return `<div class="psec">Account</div><div class="upbox">${body}${a.error ? `<div class="err">${esc(a.error)}</div>` : ''}<div id="acctMsg" class="hint"></div></div>`;
+}
+function wireAccount(reload) {
+  const msg = (t) => { if ($('acctMsg')) $('acctMsg').textContent = t; };
+  if ($('acctGithub')) $('acctGithub').onclick = async () => {
+    try {
+      const { url } = await api('/api/account/signin', { method: 'POST', body: { provider: 'github' } });
+      window.open(url, '_blank');
+      msg('Finish signing in in your browser. This updates when you are done.');
+      let n = 0;
+      const t = setInterval(async () => {
+        const a = await api('/api/account').catch(() => null);
+        if ((a && (a.signedIn || a.error)) || ++n > 100) { clearInterval(t); reload(); }
+      }, 3000);
+    } catch (e) { msg(e.message); }
+  };
+  if ($('acctOut')) $('acctOut').onclick = async () => { await api('/api/account/signout', { method: 'POST' }); reload(); };
+  if ($('acctRefresh')) $('acctRefresh').onclick = async () => { $('acctRefresh').disabled = true; await api('/api/account/refresh', { method: 'POST' }).catch(() => {}); reload(); };
+}
 async function loadAbout() {
   const pane = $('setAbout');
   const info = await api('/api/app');
@@ -106,6 +133,7 @@ async function loadAbout() {
         <div class="hint">Updates download in the background and install when you restart AgentsCircle. Your sessions, accounts and connectors are kept.</div>
       </div>` : '<div class="hint">Automatic updates are part of the desktop app. Running from a terminal, update by downloading the latest version.</div>'}
     ${statusHtml}
+    ${accountHtml(await api('/api/account').catch(() => ({ configured: false })))}
     <div class="psec">Agent settings</div>
     <div class="upbox">
       <div>How AgentsCircle runs each agent: revision ${info.tools.revision} (${info.tools.source === 'update' ? 'updated fix' : 'built in'}).</div>
@@ -121,6 +149,7 @@ async function loadAbout() {
   if ($('upInstall')) $('upInstall').onclick = () => desk.installUpdate();
   if ($('upChannel')) $('upChannel').onchange = async () => { await desk.setChannel($('upChannel').value); api('/api/app/settings', { method: 'PATCH', body: { updateChannel: $('upChannel').value } }).catch(() => {}); loadAbout(); };
   if ($('toolsCheck')) $('toolsCheck').onclick = async () => { $('toolsCheck').disabled = true; await api('/api/app/check-tools', { method: 'POST' }); loadAbout(); };
+  wireAccount(loadAbout);
   if ($('statusRescan')) $('statusRescan').onclick = async () => { $('statusRescan').disabled = true; await api('/api/setup/rescan', { method: 'POST' }); agents = await api('/api/agents'); loadAbout(); };
   pane.querySelectorAll('[data-status-login]').forEach((b) => { b.onclick = () => openSignin(b.dataset.statusLogin, { onDone: loadAbout }); });
   if ($('openData')) $('openData').onclick = () => desk.openPath('data');
