@@ -2279,10 +2279,25 @@ app.post('/api/sessions/:id/publish', async (req, res) => {
 // when an agent's sandbox can't write to .git (Codex's normal mode).
 function commitPaths(s, paths, message, { who, what }) {
   if (!paths.length) throw new Error('Nothing left to commit.');
-  const git = (args) => spawn.sync('git', args, { cwd: s.folder, encoding: 'utf8', windowsHide: true });
-  const add = git(['add', '-A', '--', ...paths]);
+  const git = (args, opts = {}) => spawn.sync('git', args, { cwd: s.folder, encoding: 'utf8', windowsHide: true, ...opts });
+  // Files taken out of git but kept on disk (now gitignored). `git add` refuses them, and
+  // `git commit -- path` would commit their contents from disk, so they're removed in a private index.
+  const ignoredOut = (git(['check-ignore', '-z', '--stdin'], { input: paths.join('\0') }).stdout || '').split('\0').filter(Boolean);
+  const stage = paths.filter((p) => !ignoredOut.includes(p));
+  const add = stage.length ? git(['add', '-A', '--', ...stage]) : { status: 0 };
   if (add.status !== 0) throw new Error((add.stderr || 'git add failed').trim());
-  const c = git(['commit', '-m', message, '--', ...paths]);
+  let c;
+  if (ignoredOut.length) {
+    const tmp = path.join(os.tmpdir(), `agentscircle-index-${crypto.randomBytes(6).toString('hex')}`);
+    const opts = { env: { ...process.env, GIT_INDEX_FILE: tmp } };
+    try {
+      for (const args of [['read-tree', 'HEAD'], ...(stage.length ? [['add', '-A', '--', ...stage]] : []), ['rm', '--cached', '--quiet', '--', ...ignoredOut]]) {
+        const r = git(args, opts);
+        if (r.status !== 0) throw new Error((r.stderr || `git ${args[0]} failed`).trim());
+      }
+      c = git(['commit', '-m', message], opts);
+    } finally { fs.rmSync(tmp, { force: true }); }
+  } else c = git(['commit', '-m', message, '--', ...paths]);
   if (c.status !== 0) {
     const out = ((c.stderr || '') + (c.stdout || '')).trim();
     if (/tell me who you are|user\.email|user\.name/i.test(out)) throw new Error('git doesn\'t know your name and email yet. In Terminal run: git config --global user.name "Your Name" and git config --global user.email you@example.com, then commit again.');
