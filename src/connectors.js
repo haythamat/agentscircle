@@ -201,6 +201,8 @@ module.exports = function createConnectors({ dataDir, accounts, version, vault, 
           out.args.push('-c', `${k}.command=${q(c.command)}`, '-c', `${k}.args=${JSON.stringify(c.args)}`);
           if (Object.keys(c.env).length) out.args.push('-c', `${k}.env=${table(c.env)}`);
         }
+        // codex exec can't ask, so it refuses MCP calls that need approval. AgentsCircle's own tools never need asking.
+        if (c.extra) out.args.push('-c', `${k}.default_tools_approval_mode="approve"`);
       }
       out.insertAfter = 1; // right after "exec"
     } else if (kind === 'opencode') {

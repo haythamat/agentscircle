@@ -251,8 +251,8 @@ function buildPrompt(s, agent, triggerMsg, wt, circleTools = false) {
     })(),
     ...(circleTools ? [`You have AgentsCircle tools (the "agentscircle" connector): read_thread for older messages, list_agents to see who is here and what they can do, ask_user to ask the user a question with options when you truly can't decide, commit and push to commit and push changes with git when the user asks (use them instead of running git commit or git push yourself; your sandbox may block .git or the network)${handoffsOn ? ', and mention to hand a task to another agent' : ''}.`] : []),
     ...(handoffsOn ? [circleTools
-      ? `To hand part of the work to another agent, call the mention tool. Only hand off when another agent is clearly better placed or the user asked for it. Don't hand back and forth.`
-      : `To hand part of the work to another agent, end your reply with one line per hand-off, exactly like: "@codex: write tests for the login form". Only hand off when another agent is clearly better placed or the user asked for it. Don't hand back and forth.`] : []),
+      ? `To hand part of the work to another agent, call the mention tool. Writing @name in your reply doesn't start that agent, so if you want it to do something now, call the tool in this turn. Only hand off when another agent is clearly better placed or the user asked for it. Don't hand back and forth, and don't hand off notes like "nothing to do" or "don't edit X"; put those in your reply.`
+      : `To hand part of the work to another agent, end your reply with one line per hand-off, exactly like: "@codex: write tests for the login form". Writing @name anywhere else doesn't start that agent. Only hand off when another agent is clearly better placed or the user asked for it. Don't hand back and forth, and don't hand off notes like "nothing to do" or "don't edit X"; put those in your reply.`] : []),
     '', '### FILES YOU MAKE FOR THE USER',
     'When the user asks for something to keep, share or look at (a document, report, list, table, chart, comparison, plan), save it as a file inside the project folder, not only in the chat, and pick the format that fits. The user sees it in the AgentsCircle panel, which previews HTML, Markdown, Word, Excel, CSV, PDF and images, and can export to Word, PDF and Excel:',
     '- Anything with a chart, dashboard, comparison or interaction: one self-contained .html file (inline CSS and JS; charts with Chart.js from https://cdn.jsdelivr.net/npm/chart.js), polished and readable, with the data in a table too.',
@@ -275,7 +275,7 @@ function buildPrompt(s, agent, triggerMsg, wt, circleTools = false) {
     triggerMsg.text,
     ...(triggerMsg.attachments && triggerMsg.attachments.length ? ['', wt ? 'Attached files (open them):' : 'Attached files (paths inside the project folder; open them):', ...triggerMsg.attachments.map((a) => `- ${wt ? path.join(s.folder, a.path) : a.path}${a.kind === 'image' ? ' (image)' : ''}`)] : []),
     '',
-    'Do what the new message asks. When you finish, reply briefly: what you did, which files you changed, and anything the other agents should know.',
+    `Do what the new message asks. When you finish, reply briefly: what you did, which files you changed, and anything the other agents should know.${handoffsOn ? ' The other agents only see that the next time they run; it doesn\'t start them.' : ''}`,
     'End your reply with one last line exactly like "Status: <where things stand, in under 12 words>".',
   ].join('\n');
 }
@@ -909,10 +909,13 @@ function handoffProblem(s, from, to, hop) {
   if (hop + 1 > HOP_LIMIT) return `The hand-off chain reached its limit (${HOP_LIMIT} in a row). Finish your part; the user will decide who continues.`;
   return null;
 }
+// "Nothing to do" or "don't edit X" tells an agent to stay out of it, so it isn't worth starting one.
+const NOT_A_TASK = /^(nothing\b|none\b|no action\b|no need\b|n\/a\b|fyi\b|do not\b|(please )?don['’]?t\b)/i;
 function queueHandoffs(s, agent, reply, hop) {
   const viaTool = new Set(reply.toolHandoffs || []);
-  const found = [...String(reply.text || '').matchAll(/^\s*\**@([a-z0-9_-]+)\**\s*:\s*(.+)$/gim)].map((m) => ({ to: m[1].toLowerCase(), task: m[2].trim() }));
-  const valid = found.filter((h) => !viaTool.has(h.to) && h.to !== agent.id && s.members.includes(h.to) && agentById(h.to) && accounts.tool(agentById(h.to)).installed);
+  const text = String(reply.text || '').replace(/```[\s\S]*?```/g, '');
+  const found = [...text.matchAll(/^\s*(?:[-*+]\s+|\d+[.)]\s+)?\**@([a-z0-9_-]+)\**\s*:\**\s*(.+)$/gim)].map((m) => ({ to: m[1].toLowerCase(), task: m[2].trim() }));
+  const valid = found.filter((h) => !NOT_A_TASK.test(h.task) && !viaTool.has(h.to) && h.to !== agent.id && s.members.includes(h.to) && agentById(h.to) && accounts.tool(agentById(h.to)).installed);
   if (!valid.length) return;
   if (hop + 1 > HOP_LIMIT) {
     addMessage(s, { role: 'system', text: `Paused the hand-off chain after ${HOP_LIMIT} hand-offs in a row, so agents don't keep passing work around. Mention an agent to continue.` });
@@ -1750,6 +1753,7 @@ app.post('/api/internal/circle/mention', (req, res) => {
   const to = String((req.body || {}).agent || '').trim().replace(/^@/, '').toLowerCase();
   const task = String((req.body || {}).task || '').trim().slice(0, 4000);
   if (!task) return res.json({ error: 'Say what the agent should do (task).' });
+  if (NOT_A_TASK.test(task)) return res.json({ error: 'That reads as a note, not a task, and handing it off would start the agent for nothing. Put it in your reply instead.' });
   const problem = handoffProblem(r.s, r.agent, to, r.hop);
   if (problem) return res.json({ error: problem });
   handoff(r.s, r.agent, r.reply, to, task, r.hop);
