@@ -8,7 +8,9 @@ const path = require('path');
 const crypto = require('crypto');
 
 const DAY = 86400000;
-const OFFLINE_GRACE_DAYS = 14; // app side: how long a cached token is trusted without reaching the server
+const OFFLINE_GRACE_DAYS = 14; // the server signs expiresAt = issuedAt + this; the app never extends it
+const CLOCK_SKEW = 5 * 60000; // tolerated clock difference for an issuedAt that is slightly in the future
+const OK_STATUS = new Set(['active', 'trialing', 'past_due']); // anything else fails closed
 const PAST_DUE_GRACE_DAYS = 7; // server side: how long a failed payment keeps full access
 
 // Everything local stays free. Paid features are the ones that need a server or are Pro-only.
@@ -30,8 +32,13 @@ function decode(token, publicKey) {
 
 module.exports = function createEntitlements({ dataDir, settings, publicKey = '', now = () => Date.now() }) {
   const file = path.join(dataDir, 'plan.json');
-  let cached = null; // { token, verifiedAt }
+  let cached = null; // { token }
   try { cached = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* signed out */ }
+  if (!cached || typeof cached !== 'object' || typeof cached.token !== 'string') cached = null;
+
+  // Signed issuance and expiry are mandatory. Lifetime comes from the signed values only.
+  const timed = (p) => Number.isFinite(p.issuedAt) && Number.isFinite(p.expiresAt) && p.expiresAt > p.issuedAt
+    && p.expiresAt - p.issuedAt <= OFFLINE_GRACE_DAYS * DAY;
 
   const enabled = () => settings.get().entitlements === true;
   const save = () => { try { fs.writeFileSync(file, JSON.stringify(cached), { mode: 0o600 }); } catch { /* best effort */ } };
@@ -43,10 +50,10 @@ module.exports = function createEntitlements({ dataDir, settings, publicKey = ''
     const p = decode(cached.token, publicKey);
     if (!p || !ORDER.includes(p.plan)) return free;
     const t = now();
-    const out = { plan: p.plan, status: p.status || 'active', founding: !!p.founding, signedIn: true, verifiedAt: cached.verifiedAt };
-    if (typeof p.expiresAt === 'number' && t > p.expiresAt) return { ...free, reason: 'expired', signedIn: true };
-    if (t - cached.verifiedAt > OFFLINE_GRACE_DAYS * DAY) return { ...free, reason: 'offline-grace-over', signedIn: true };
-    if (p.status === 'canceled') return { ...free, reason: 'canceled', signedIn: true };
+    if (!timed(p) || !OK_STATUS.has(p.status)) return free;
+    const out = { plan: p.plan, status: p.status, founding: !!p.founding, signedIn: true, verifiedAt: p.issuedAt, expiresAt: p.expiresAt };
+    if (p.issuedAt > t + CLOCK_SKEW) return free;
+    if (t > p.expiresAt) return { ...free, reason: 'offline-grace-over', signedIn: true };
     if (p.status === 'past_due' && t - (p.pastDueSince || 0) > PAST_DUE_GRACE_DAYS * DAY) return { ...free, reason: 'past-due-over', signedIn: true };
     if (p.status === 'past_due') out.graceEndsAt = (p.pastDueSince || t) + PAST_DUE_GRACE_DAYS * DAY;
     return out;
@@ -61,10 +68,14 @@ module.exports = function createEntitlements({ dataDir, settings, publicKey = ''
     return false;
   }
 
-  // Store a token from the server. Rejected unless the signature checks out.
+  // Store a token from the server. Rejected unless signed, well-formed, unexpired and not older than the cached one.
   function setToken(token) {
-    if (!decode(token, publicKey)) return false;
-    cached = { token, verifiedAt: now() };
+    const p = decode(token, publicKey);
+    if (!p || !ORDER.includes(p.plan) || !timed(p) || !OK_STATUS.has(p.status)) return false;
+    if (now() > p.expiresAt || p.issuedAt > now() + CLOCK_SKEW) return false;
+    const old = cached && decode(cached.token, publicKey);
+    if (old && Number.isFinite(old.issuedAt) && p.issuedAt < old.issuedAt) return false; // never go back to an older token
+    cached = { token };
     save();
     return true;
   }

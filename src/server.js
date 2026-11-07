@@ -1178,7 +1178,12 @@ app.use(express.static(path.join(ROOT, 'public')));
 }
 
 app.get('/api/plan', (_req, res) => res.json({ enabled: entitlements.enabled(), ...entitlements.status(), features: entitlements.features }));
-app.get('/api/plan/export', (_req, res) => res.json(entitlements.exportData()));
+// The signed-in app passes the token from the plan-token function; it is stored only if the signature checks out.
+app.post('/api/plan/token', (req, res) => {
+  const ok = entitlements.setToken(req.body && req.body.token);
+  res.status(ok ? 200 : 400).json(ok ? { ok: true, ...entitlements.status() } : { ok: false, error: 'That plan token is not valid.' });
+});
+app.get('/api/plan/export',(_req, res) => res.json(entitlements.exportData()));
 app.delete('/api/plan/data', (_req, res) => res.json(entitlements.deleteData()));
 app.get('/api/agents', (_req, res) => res.json(agentsPayload()));
 app.get('/api/tools', (_req, res) => res.json(accounts.publicTools()));
