@@ -2,13 +2,14 @@ node_modules/
 dist/
 .DS_Store
 *.pem
-.impeccable/questions/
+.impeccable/
 *.log
 PRO-AND-TEAMS-PLAN.md
 SKI-feature-ideas.md
 /SKI-feature-ideas.md
 /PRO-AND-TEAMS-PLAN.md
 /PRIVACY-AND-RETENTION.md
-/docs/reviews/phase-one-security-review.md
-/docs/reviews/account-signin-review.md
+/PRODUCT.md
+/docs/reviews/
 /social-posts.md
+/supabase/
