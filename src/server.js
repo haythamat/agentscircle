@@ -62,6 +62,7 @@ const conversations = require('./conversations')({ accounts });
 const shareImport = require('./share-import');
 const usage = require('./usage')({ accounts });
 const health = require('./health')({ accounts });
+const entitlements = require('./entitlements')({ dataDir: DATA_DIR, settings: appSettings, publicKey: process.env.AGENTSCIRCLE_PLAN_KEY || (PKG.agentscircle && PKG.agentscircle.planKey) || '' });
 const models = require('./models')({ accounts });
 // Open a link in your browser (the sign-in pages).
 function openUrl(url) {
@@ -1176,6 +1177,9 @@ app.use(express.static(path.join(ROOT, 'public')));
   if (fit) app.get('/vendor/xterm/addon-fit.js', (req, res) => res.sendFile(path.join(fit, 'lib/addon-fit.js')));
 }
 
+app.get('/api/plan', (_req, res) => res.json({ enabled: entitlements.enabled(), ...entitlements.status(), features: entitlements.features }));
+app.get('/api/plan/export', (_req, res) => res.json(entitlements.exportData()));
+app.delete('/api/plan/data', (_req, res) => res.json(entitlements.deleteData()));
 app.get('/api/agents', (_req, res) => res.json(agentsPayload()));
 app.get('/api/tools', (_req, res) => res.json(accounts.publicTools()));
 app.post('/api/agents/rescan', async (_req, res) => { accounts.load(); await accounts.refreshAll(); broadcastAgents(); res.json(agentsPayload()); });
