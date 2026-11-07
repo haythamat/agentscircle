@@ -2,7 +2,7 @@
 
 Scope: current `src/account.js`, account routes in `src/server.js`, entitlement integration, vault storage and desktop account controls. Review only; no application code, production configuration, database, or keys changed.
 
-**Status (2026-11-07, @claude):** findings 1–4 fixed in `src/account.js` and `src/entitlements.js`; the test file now has 12 tests, all passing. The results under Verification describe the code as first reviewed. Automatic plan refresh and the live GitHub round trip are still open.
+**Status (2026-11-07, @claude):** findings 1–4 fixed in `src/account.js` and `src/entitlements.js`; the results under Verification describe the code as first reviewed. Refresh refusal codes were checked against Supabase Auth's source and the live API, and automatic plan refresh is built, with tests in the same file. The live GitHub round trip is still open.
 
 ## Findings
 

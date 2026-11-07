@@ -1185,6 +1185,8 @@ app.post('/api/plan/token', (req, res) => {
 });
 // Optional account sign-in (GitHub). The browser signs in; Supabase redirects back to /auth/callback.
 const account = require('./account')({ url: (PKG.agentscircle && PKG.agentscircle.supabaseUrl) || '', anonKey: (PKG.agentscircle && PKG.agentscircle.supabaseKey) || '', port: PORT, vault, entitlements });
+setTimeout(() => account.refreshIfDue(), 3000);
+setInterval(() => account.refreshIfDue(), 60 * 60 * 1000).unref();
 app.get('/api/account', (_req, res) => res.json(account.state()));
 app.post('/api/account/signin', (req, res) => {
   try { res.json({ url: account.begin(String((req.body || {}).provider || 'github')) }); } catch (e) { res.status(400).json({ error: e.message }); }

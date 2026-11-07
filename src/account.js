@@ -7,8 +7,10 @@ const crypto = require('crypto');
 const b64u = (b) => Buffer.from(b).toString('base64url');
 const PROVIDERS = new Set(['github', 'google']);
 const PENDING_MS = 10 * 60000;
-// The refresh token itself was refused. Anything else (rate limit, outage, bad config) is retryable and keeps the session.
-const REFRESH_REJECTED = new Set(['invalid_grant', 'refresh_token_not_found', 'refresh_token_already_used', 'session_not_found', 'session_expired', 'user_not_found', 'user_banned']);
+const PLAN_REFRESH_MS = 24 * 3600000; // a changed plan reaches the app within a day; well inside the token's 14-day lifetime
+// The refresh token itself was refused (error_code from Supabase Auth, checked against its source and the live API).
+// Anything else (conflict, rate limit, outage, bad config) is retryable and keeps the session.
+const REFRESH_REJECTED = new Set(['refresh_token_not_found', 'refresh_token_already_used', 'session_not_found', 'session_expired', 'validation_failed', 'user_not_found', 'user_banned']);
 
 module.exports = function createAccount({ url, anonKey, port, vault, entitlements, fetchImpl = fetch, now = () => Date.now() }) {
   const configured = !!(url && anonKey);
@@ -17,6 +19,8 @@ module.exports = function createAccount({ url, anonKey, port, vault, entitlement
   let pending = null; // { state, verifier, at }
   let lastError = '';
   let generation = 0; // bumped when a session ends or a new login starts; older in-flight requests must not touch state
+  let planAt = 0; // when this run last got a plan; 0 means due now
+  let inflight = null; // { g, promise }: a timer and a click share one request, so the refresh token is not spent twice
   try { const raw = vault && vault.get('account-session'); if (raw) session = JSON.parse(raw); } catch { session = null; }
   entitlements.bindAccount(() => (session ? session.user.id : null));
 
@@ -27,7 +31,7 @@ module.exports = function createAccount({ url, anonKey, port, vault, entitlement
     expires_at: s.expires_at ? s.expires_at * 1000 : now() + (s.expires_in || 3600) * 1000,
     user: { id: s.user.id, email: s.user.email || '', name: (s.user.user_metadata && (s.user.user_metadata.user_name || s.user.user_metadata.full_name)) || '' },
   });
-  const endSession = () => { generation++; session = null; persist(); entitlements.clear(); };
+  const endSession = () => { generation++; planAt = 0; session = null; persist(); entitlements.clear(); };
   const stillCurrent = (g) => { if (g !== generation) throw new Error('Sign-in was cancelled.'); };
 
   function begin(provider) {
@@ -64,7 +68,7 @@ module.exports = function createAccount({ url, anonKey, port, vault, entitlement
     const j = await r.json().catch(() => ({}));
     stillCurrent(g);
     if (!r.ok || !j.access_token || !j.user) {
-      if (REFRESH_REJECTED.has(j.error_code) || REFRESH_REJECTED.has(j.error)) {
+      if (REFRESH_REJECTED.has(j.error_code)) {
         endSession();
         lastError = 'Your sign-in expired. Sign in again.';
         throw new Error(lastError);
@@ -76,8 +80,14 @@ module.exports = function createAccount({ url, anonKey, port, vault, entitlement
   }
 
   // Ask the plan-token function for a signed plan and cache it if it is for this account.
-  async function refreshPlan() {
-    const g = generation;
+  // quiet: a background check stays silent while the cached plan still works; the user has nothing to do yet.
+  function refreshPlan(quiet = false) {
+    if (inflight && inflight.g === generation) return inflight.promise;
+    const promise = fetchPlan(generation, quiet).finally(() => { if (inflight && inflight.promise === promise) inflight = null; });
+    inflight = { g: generation, promise };
+    return promise;
+  }
+  async function fetchPlan(g, quiet) {
     try {
       const token = await fresh(g);
       if (!token) throw new Error('Not signed in.');
@@ -88,12 +98,19 @@ module.exports = function createAccount({ url, anonKey, port, vault, entitlement
       const sub = (() => { try { return JSON.parse(Buffer.from(String(j.token).split('.')[0], 'base64url').toString()).sub; } catch { return null; } })();
       if (sub !== session.user.id) throw new Error('That plan belongs to a different account.');
       if (!entitlements.setToken(j.token)) throw new Error('The plan token was not accepted.');
+      planAt = now();
       lastError = '';
       return entitlements.status();
     } catch (e) {
-      if (g === generation) lastError = e.message;
+      if (g === generation && !(quiet && entitlements.status().expiresAt)) lastError = e.message;
       throw e;
     }
+  }
+
+  // Called on a timer. A failure is retried on the next call, so a paid user who stays online never has to click.
+  async function refreshIfDue() {
+    if (!session || now() - planAt < PLAN_REFRESH_MS) return;
+    await refreshPlan(true).catch(() => {});
   }
 
   function signOut() { pending = null; lastError = ''; endSession(); }
@@ -103,5 +120,5 @@ module.exports = function createAccount({ url, anonKey, port, vault, entitlement
       keychain: !!(vault && vault.available()), redirectTo, error: lastError,
     };
   }
-  return { begin, callback, refreshPlan, signOut, state: publicState, redirectTo };
+  return { begin, callback, refreshPlan, refreshIfDue, signOut, state: publicState, redirectTo };
 };
