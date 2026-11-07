@@ -90,7 +90,7 @@ function accountHtml(a) {
        <div style="display:flex;gap:6px;margin-top:8px"><button id="acctRefresh" style="padding:4px 10px;font-size:12px">Refresh plan</button><button id="acctOut" style="padding:4px 10px;font-size:12px">Sign out</button></div>`
     : `<div class="hint" style="margin:0 0 8px">Optional. Sign in to use paid plans later. The free app works fully without it.</div>
        <button class="primary" id="acctGithub">Sign in with GitHub</button>`;
-  return `<div class="psec">Account</div><div class="upbox">${body}${a.error ? `<div class="err">${esc(a.error)}</div>` : ''}<div id="acctMsg" class="hint"></div></div>`;
+  return `<div class="psec" id="acctSection">Account</div><div class="upbox">${body}${a.error ? `<div class="err">${esc(a.error)}</div>` : ''}<div id="acctMsg" class="hint"></div></div>`;
 }
 function wireAccount(reload) {
   const msg = (t) => { if ($('acctMsg')) $('acctMsg').textContent = t; };
@@ -109,8 +109,20 @@ function wireAccount(reload) {
   if ($('acctOut')) $('acctOut').onclick = async () => { await api('/api/account/signout', { method: 'POST' }); reload(); };
   if ($('acctRefresh')) $('acctRefresh').onclick = async () => { $('acctRefresh').disabled = true; await api('/api/account/refresh', { method: 'POST' }).catch(() => {}); reload(); };
 }
+// Sidebar shortcut to the Account section, shown only while signed out.
+async function syncSigninBtn() {
+  const a = await api('/api/account').catch(() => null);
+  $('signinFoot').style.display = a && a.configured && !a.signedIn ? '' : 'none';
+}
+$('signinBtn').onclick = async () => {
+  openSettings('about');
+  for (let n = 0; n < 40 && !$('acctSection'); n++) await new Promise((r) => setTimeout(r, 50));
+  if ($('acctSection')) $('acctSection').scrollIntoView({ block: 'start' });
+};
+syncSigninBtn();
 async function loadAbout() {
   const pane = $('setAbout');
+  syncSigninBtn();
   const info = await api('/api/app');
   if (typeof loadUsageCounts === 'function') await loadUsageCounts();
   const d = desk ? await desk.appInfo() : null;

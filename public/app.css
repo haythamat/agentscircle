@@ -243,6 +243,8 @@ kbd { font: 500 11px/1 var(--font); color: inherit; opacity: .65; letter-spacing
 @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 aside .foot { padding: 10px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 6px; }
 aside .foot #acctBtn { flex: 1; justify-content: flex-start; padding: 0 10px; }
+aside .foot-signin { padding-bottom: 0; border-top: 0; }
+aside .foot #signinBtn { flex: 1; justify-content: flex-start; padding: 0 10px; }
 .sres { padding: 7px 10px; border-radius: var(--r); cursor: pointer; margin-bottom: 1px; font-size: 12.5px; }
 @media (hover: hover) and (pointer: fine) { .sres:hover { background: var(--hover); } }
 .sres .n { font-weight: 600; font-size: 12px; } .sres mark { background: var(--warn-bg); color: var(--text); border-radius: 3px; padding: 0 1px; }
