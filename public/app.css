@@ -1020,6 +1020,8 @@ button.ign-on:hover, button.ghost.ign-on:hover { filter: brightness(1.1); }
 .gate-opt li svg { width: 15px; height: 15px; flex: none; margin-top: 3px; color: var(--muted); }
 .gate-opt button { justify-content: center; width: 100%; min-height: 36px; }
 .gate-foot { margin-top: 14px; color: var(--muted); font-size: 12.5px; }
+.gate-email { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.gate-email input { min-height: 36px; }
 .gate-actions { display: flex; gap: 8px; margin-top: 18px; }
 .gate-actions button { min-height: 36px; padding: 0 16px; }
 @media (max-width: 620px) { .gate-opts { grid-template-columns: 1fr; } }

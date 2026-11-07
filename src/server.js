@@ -1186,17 +1186,21 @@ app.post('/api/plan/token', (req, res) => {
   const ok = entitlements.setToken(req.body && req.body.token);
   res.status(ok ? 200 : 400).json(ok ? { ok: true, ...entitlements.status() } : { ok: false, error: 'That plan token is not valid.' });
 });
-// Optional account sign-in (GitHub). The browser signs in; Supabase redirects back to /auth/callback.
+// Optional account sign-in (GitHub or an emailed link). The browser signs in; Supabase redirects back to /auth/callback.
 const account = require('./account')({ url: (PKG.agentscircle && PKG.agentscircle.supabaseUrl) || '', anonKey: (PKG.agentscircle && PKG.agentscircle.supabaseKey) || '', port: PORT, vault, entitlements });
 setTimeout(() => account.refreshIfDue(), 3000);
 setInterval(() => account.refreshIfDue(), 60 * 60 * 1000).unref();
 app.get('/api/account', (_req, res) => res.json({ ...account.state(), skipped: !!appSettings.get().accountSkipped }));
-app.post('/api/account/signin', (req, res) => {
-  try { res.json({ url: account.begin(String((req.body || {}).provider || 'github')) }); } catch (e) { res.status(400).json({ error: e.message }); }
+app.post('/api/account/signin', async (req, res) => {
+  const b = req.body || {};
+  try {
+    if (b.provider === 'email') return res.json(await account.beginEmail(b.email));
+    res.json({ url: account.begin(String(b.provider || 'github')) });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.post('/api/account/signout', (_req, res) => { account.signOut(); res.json(account.state()); });
 app.post('/api/account/refresh', async (_req, res) => {
-  try { await account.refreshPlan(); } catch (e) { return res.status(400).json({ error: e.message, ...account.state() }); }
+  try { await account.refreshPlan(); } catch (e) { return res.status(400).json({ ...account.state(), error: e.message }); }
   res.json(account.state());
 });
 app.get('/auth/callback', async (req, res) => {

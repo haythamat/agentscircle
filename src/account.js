@@ -1,4 +1,4 @@
-// Optional account sign-in through Supabase Auth (GitHub). PKCE flow: the browser does the sign-in,
+// Optional account sign-in through Supabase Auth (GitHub, or a link sent by email). PKCE flow: the browser does the sign-in,
 // Supabase redirects to http://127.0.0.1:<port>/auth/callback, and the app swaps the code for a session.
 // The session is kept in the OS keychain when available (otherwise only in memory). The free app never needs it.
 
@@ -34,28 +34,60 @@ module.exports = function createAccount({ url, anonKey, port, vault, entitlement
   const endSession = () => { generation++; planAt = 0; session = null; persist(); entitlements.clear(); };
   const stillCurrent = (g) => { if (g !== generation) throw new Error('Sign-in was cancelled.'); };
 
-  function begin(provider) {
+  // A new attempt: its PKCE pair and the state the callback must bring back.
+  function start() {
     if (!configured) throw new Error('Account sign-in is not set up in this build.');
-    if (!PROVIDERS.has(provider)) throw new Error('Unknown sign-in provider.');
     const verifier = b64u(crypto.randomBytes(48));
     const challenge = b64u(crypto.createHash('sha256').update(verifier).digest());
     generation++;
     pending = { state: b64u(crypto.randomBytes(16)), verifier, at: now() };
     lastError = '';
-    const q = new URLSearchParams({ provider, redirect_to: `${redirectTo}?state=${pending.state}`, code_challenge: challenge, code_challenge_method: 's256' });
+    return { challenge, back: `${redirectTo}?state=${pending.state}` };
+  }
+
+  function begin(provider) {
+    if (!configured) throw new Error('Account sign-in is not set up in this build.');
+    if (!PROVIDERS.has(provider)) throw new Error('Unknown sign-in provider.');
+    const { challenge, back } = start();
+    const q = new URLSearchParams({ provider, redirect_to: back, code_challenge: challenge, code_challenge_method: 's256' });
     return `${url}/auth/v1/authorize?${q}`;
+  }
+
+  // Email: Supabase sends a one-time link. Opened on this computer, it lands on the same /auth/callback as GitHub.
+  async function beginEmail(email) {
+    email = String(email || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter a valid email address.');
+    const { challenge, back } = start();
+    const p = pending;
+    const r = await fetchImpl(`${url}/auth/v1/otp?redirect_to=${encodeURIComponent(back)}`, {
+      method: 'POST', headers: headers(), body: JSON.stringify({ email, create_user: true, code_challenge: challenge, code_challenge_method: 's256' }),
+    });
+    if (r.ok) return { sent: true };
+    const j = await r.json().catch(() => ({}));
+    if (pending === p) pending = null;
+    if (j.error_code === 'over_email_send_rate_limit' || r.status === 429) throw new Error('Too many sign-in emails were sent. Wait a few minutes and try again.');
+    if (j.error_code === 'email_provider_disabled') throw new Error('Email sign-in is not turned on yet. Use GitHub for now.');
+    throw new Error(j.msg || j.error_description || 'Could not send the sign-in email. Try again.');
   }
 
   async function callback({ code, state }) {
     const p = pending;
     if (!p || now() - p.at > PENDING_MS || !state || state !== p.state) throw new Error('This sign-in link is not valid or has expired. Start again from the app.'); // a stray callback must not cancel the real one
     pending = null;
-    if (!code) throw new Error('Sign-in was cancelled or failed.');
     const g = generation;
-    const r = await fetchImpl(`${url}/auth/v1/token?grant_type=pkce`, { method: 'POST', headers: headers(), body: JSON.stringify({ auth_code: code, code_verifier: p.verifier }) });
-    const j = await r.json().catch(() => ({}));
-    stillCurrent(g);
-    if (!r.ok || !j.access_token || !j.user) throw new Error(j.error_description || j.msg || 'Could not complete sign-in.');
+    let j;
+    try {
+      if (!code) throw new Error('Sign-in was cancelled or failed. Try again.');
+      const r = await fetchImpl(`${url}/auth/v1/token?grant_type=pkce`, { method: 'POST', headers: headers(), body: JSON.stringify({ auth_code: code, code_verifier: p.verifier }) });
+      j = await r.json().catch(() => ({}));
+      stillCurrent(g);
+      if (!r.ok || !j.access_token || !j.user) throw new Error(j.error_description || j.msg || 'Could not complete sign-in.');
+    } catch (e) {
+      if (g === generation) lastError = e.message; // the app is polling for this attempt's result
+      throw e;
+    }
+    generation++; // the new account replaces the old one: refreshes started for it must not write back
+    planAt = 0;
     session = slim(j); persist();
     await refreshPlan().catch(() => {}); // the failure is in lastError; the sign-in itself worked
     return publicState();
@@ -81,13 +113,16 @@ module.exports = function createAccount({ url, anonKey, port, vault, entitlement
 
   // Ask the plan-token function for a signed plan and cache it if it is for this account.
   // quiet: a background check stays silent while the cached plan still works; the user has nothing to do yet.
+  // A click that joins a background request makes its failure visible too.
   function refreshPlan(quiet = false) {
-    if (inflight && inflight.g === generation) return inflight.promise;
-    const promise = fetchPlan(generation, quiet).finally(() => { if (inflight && inflight.promise === promise) inflight = null; });
-    inflight = { g: generation, promise };
-    return promise;
+    if (inflight && inflight.g === generation) { if (!quiet) inflight.quiet = false; return inflight.promise; }
+    const req = { g: generation, quiet };
+    req.promise = fetchPlan(req).finally(() => { if (inflight === req) inflight = null; });
+    inflight = req;
+    return req.promise;
   }
-  async function fetchPlan(g, quiet) {
+  async function fetchPlan(req) {
+    const { g } = req;
     try {
       const token = await fresh(g);
       if (!token) throw new Error('Not signed in.');
@@ -102,7 +137,7 @@ module.exports = function createAccount({ url, anonKey, port, vault, entitlement
       lastError = '';
       return entitlements.status();
     } catch (e) {
-      if (g === generation && !(quiet && entitlements.status().expiresAt)) lastError = e.message;
+      if (g === generation && !(req.quiet && entitlements.status().expiresAt)) lastError = e.message;
       throw e;
     }
   }
@@ -116,9 +151,9 @@ module.exports = function createAccount({ url, anonKey, port, vault, entitlement
   function signOut() { pending = null; lastError = ''; endSession(); }
   function publicState() {
     return {
-      configured, providers: [...PROVIDERS], signedIn: !!session, user: session ? { email: session.user.email, name: session.user.name } : null,
+      configured, providers: [...PROVIDERS, 'email'], signedIn: !!session, user: session ? { email: session.user.email, name: session.user.name } : null,
       keychain: !!(vault && vault.available()), redirectTo, error: lastError,
     };
   }
-  return { begin, callback, refreshPlan, refreshIfDue, signOut, state: publicState, redirectTo };
+  return { begin, beginEmail, callback, refreshPlan, refreshIfDue, signOut, state: publicState, redirectTo };
 };

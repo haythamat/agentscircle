@@ -87,13 +87,14 @@ const PLAN_NAMES = { free: 'Free', pro: 'Pro', teams: 'Teams' };
 const acctName = (a) => a.user.name || a.user.email || 'Your account';
 const acctTile = (a, cls = '') => `<span class="tile ${cls}">${esc(acctName(a).slice(0, 2).toUpperCase())}</span>`;
 
-// Opens the browser and waits for the local callback. Shared by the welcome screen and Settings → Account and plan.
+// Opens the browser (GitHub) or sends a link (email), then waits for the local callback.
+// Shared by the welcome screen and Settings → Account and plan.
 let signInWait = null;
 const stopSignIn = () => { clearInterval(signInWait); signInWait = null; };
-async function startSignIn(onDone) {
+async function startSignIn(onDone, email) {
   stopSignIn();
-  const { url } = await api('/api/account/signin', { method: 'POST', body: { provider: 'github' } });
-  window.open(url, '_blank');
+  const { url } = await api('/api/account/signin', { method: 'POST', body: email ? { provider: 'email', email } : { provider: 'github' } });
+  if (url) window.open(url, '_blank');
   let n = 0;
   signInWait = setInterval(async () => {
     const a = await api('/api/account').catch(() => null);
@@ -135,16 +136,25 @@ function openGate() {
         <div class="gate-opts">
           <div class="gate-opt"><h2>Use an account</h2>
             <ul>${item('Everything in the free app')}${item('Paid features when they launch: scheduled tasks, session sync and phone approvals')}${item('Your plan follows you to your other computers')}</ul>
-            <button class="primary" id="gateIn">Sign in with GitHub</button></div>
+            <button class="primary" id="gateIn">Sign in with GitHub</button>
+            <form class="gate-email" id="gateEmailForm"><input type="email" id="gateEmail" placeholder="you@example.com" aria-label="Email address" autocomplete="email" required><button id="gateEmailGo">Email me a sign-in link</button></form></div>
           <div class="gate-opt"><h2>Stay without an account</h2>
             <ul>${item('Group chat, all your agents, approvals, undo and search')}${item('Free, with no time limit')}${item('Sign in later from the sidebar if you change your mind')}</ul>
             <button id="gateSkip">Continue without an account</button></div>
         </div>
         ${error ? `<div class="err" role="alert">${esc(error)}</div>` : ''}
         <p class="gate-foot">Either way, AgentsCircle doesn't receive your code, chats or agent logins. An account stores your email, name and plan.</p>`);
+      const done = (a) => (a && a.signedIn ? signedIn(a) : choose((a && a.error) || 'Sign-in did not finish. Try again.'));
       $('gateIn').onclick = async () => {
         $('gateIn').disabled = true;
-        try { waiting(await startSignIn((a) => (a && a.signedIn ? signedIn(a) : choose((a && a.error) || 'Sign-in did not finish. Try again.')))); }
+        try { waiting(await startSignIn(done)); }
+        catch (e) { choose(e.message); }
+      };
+      $('gateEmailForm').onsubmit = async (ev) => {
+        ev.preventDefault();
+        const email = $('gateEmail').value.trim();
+        $('gateEmailGo').disabled = true;
+        try { await startSignIn(done, email); waitingEmail(email); }
         catch (e) { choose(e.message); }
       };
       $('gateSkip').onclick = () => { api('/api/app/settings', { method: 'PATCH', body: { accountSkipped: true } }).catch(() => {}); close(); };
@@ -157,6 +167,14 @@ function openGate() {
       $('gateAgain').onclick = () => window.open(url, '_blank');
       $('gateBack').onclick = () => { stopSignIn(); choose(); };
       $('gateAgain').focus();
+    };
+    const waitingEmail = (email) => {
+      shell(`<h1 id="gateTitle">Check your email</h1>
+        <p class="lead">We sent a sign-in link to ${esc(email)}. Open it on this computer. This screen moves on by itself when you're done.</p>
+        <p class="gate-foot">No email after a few minutes? Check your spam folder, or go back and try again.</p>
+        <div class="gate-actions"><button class="ghost" id="gateBack">Back</button></div>`);
+      $('gateBack').onclick = () => { stopSignIn(); choose(); };
+      $('gateBack').focus();
     };
     const signedIn = async (a) => {
       const p = await api('/api/plan').catch(() => ({ plan: 'free' }));
@@ -207,6 +225,7 @@ async function loadPlanPane() {
     : `<div class="upbox"><div>You're using AgentsCircle without an account. Nothing in the free app needs one.</div>
         <div class="hint">Sign in to use paid features when they launch. AgentsCircle doesn't receive your code, chats or agent logins; an account stores your email, name and plan.</div>
         <div style="display:flex;gap:6px;margin-top:10px"><button class="primary" id="acctGithub">Sign in with GitHub</button><button id="acctAgain" style="display:none">Open the browser again</button></div>
+        <form id="acctEmailForm" style="display:flex;gap:6px;margin-top:8px"><input type="email" id="acctEmail" placeholder="you@example.com" aria-label="Email address" autocomplete="email" required style="max-width:260px"><button id="acctEmailGo">Email me a sign-in link</button></form>
         <div id="acctMsg" class="hint" role="status"></div>${a.error ? `<div class="err">${esc(a.error)}</div>` : ''}</div>`;
   pane.innerHTML = `<h4>Account and plan</h4><p class="lead">Everything is managed here in the app. There's no web account yet.</p>
     ${who}
@@ -226,6 +245,15 @@ async function loadPlanPane() {
       $('acctAgain').style.display = '';
       $('acctAgain').onclick = () => window.open(url, '_blank');
     } catch (e) { $('acctMsg').textContent = e.message; }
+  };
+  if ($('acctEmailForm')) $('acctEmailForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const email = $('acctEmail').value.trim();
+    $('acctEmailGo').disabled = true;
+    try {
+      await startSignIn(() => loadPlanPane(), email);
+      $('acctMsg').textContent = `We sent a sign-in link to ${email}. Open it on this computer. This updates when you are done.`;
+    } catch (e) { $('acctMsg').textContent = e.message; $('acctEmailGo').disabled = false; }
   };
 }
 async function loadAbout() {
