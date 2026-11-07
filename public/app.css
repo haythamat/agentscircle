@@ -243,8 +243,9 @@ kbd { font: 500 11px/1 var(--font); color: inherit; opacity: .65; letter-spacing
 @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 aside .foot { padding: 10px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 6px; }
 aside .foot #acctBtn { flex: 1; justify-content: flex-start; padding: 0 10px; }
-aside .foot-signin { padding-bottom: 0; border-top: 0; }
-aside .foot #signinBtn { flex: 1; justify-content: flex-start; padding: 0 10px; }
+aside .foot-account { padding-bottom: 0; border-top: 0; }
+aside .foot #accountBtn { flex: 1; min-width: 0; justify-content: flex-start; padding: 0 10px; gap: 8px; }
+#accountBtn .acct-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .sres { padding: 7px 10px; border-radius: var(--r); cursor: pointer; margin-bottom: 1px; font-size: 12.5px; }
 @media (hover: hover) and (pointer: fine) { .sres:hover { background: var(--hover); } }
 .sres .n { font-weight: 600; font-size: 12px; } .sres mark { background: var(--warn-bg); color: var(--text); border-radius: 3px; padding: 0 1px; }
@@ -1002,3 +1003,38 @@ button.ign-on:hover, button.ghost.ign-on:hover { filter: brightness(1.1); }
 
 .aipick{display:flex;align-items:center;gap:8px;margin:0 0 6px;flex-wrap:wrap}
 .pickchip{background:var(--accent-soft,rgba(108,140,255,.15));border-radius:6px;padding:2px 8px;font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Welcome screen before the app: sign in or continue without an account */
+.gate { position: fixed; inset: 0; z-index: 60; display: none; overflow: auto; padding: 32px 24px; background: var(--bg); -webkit-app-region: drag; }
+.gate.open { display: flex; }
+.gate-in { margin: auto; width: min(720px, 100%); -webkit-app-region: no-drag; }
+.gate-brand { display: flex; align-items: center; gap: 10px; font: 600 19px/1 var(--font-cond); margin-bottom: 28px; }
+.gate-brand .logo-mark { width: 28px; height: 28px; flex: none; }
+.gate h1 { margin: 0 0 6px; font-size: 24px; font-weight: 650; letter-spacing: -0.015em; text-wrap: balance; }
+.gate .lead { margin: 0 0 22px; color: var(--muted); font-size: 14px; }
+.gate-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.gate-opt { display: flex; flex-direction: column; padding: 18px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); }
+.gate-opt h2 { margin: 0 0 12px; font-size: 15px; font-weight: 650; }
+.gate-opt ul { flex: 1; margin: 0 0 18px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; color: var(--text-2); }
+.gate-opt li { display: flex; gap: 8px; }
+.gate-opt li svg { width: 15px; height: 15px; flex: none; margin-top: 3px; color: var(--muted); }
+.gate-opt button { justify-content: center; width: 100%; min-height: 36px; }
+.gate-foot { margin-top: 14px; color: var(--muted); font-size: 12.5px; }
+.gate-actions { display: flex; gap: 8px; margin-top: 18px; }
+.gate-actions button { min-height: 36px; padding: 0 16px; }
+@media (max-width: 620px) { .gate-opts { grid-template-columns: 1fr; } }
+
+/* Settings → Account and plan */
+.acct-who { display: flex; align-items: center; gap: 12px; }
+.acct-who .grow { flex: 1; min-width: 0; }
+.acct-who b, .acct-who .hint { display: block; margin: 0; overflow-wrap: anywhere; }
+.plan-now { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 650; }
+.plantable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.plantable th, .plantable td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; font-weight: 400; }
+.plantable tr:last-child td { border-bottom: 0; }
+.plantable .col { width: 1%; min-width: 72px; text-align: center; }
+.plantable th.col b { display: block; font-weight: 650; }
+.plantable th.col span { display: block; margin-top: 2px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plantable .here { background: var(--sel); }
+.plantable td svg { width: 15px; height: 15px; vertical-align: -3px; color: var(--ok); }
+.plantable td.none { color: var(--faint); }

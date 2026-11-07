@@ -13,5 +13,6 @@ contextBridge.exposeInMainWorld('agentscircleDesktop', {
   onNewSession: (cb) => ipcRenderer.on('ui:new-session', () => cb()),
   onToggleSidebar: (cb) => ipcRenderer.on('ui:toggle-sidebar', () => cb()),
   onTogglePanel: (cb) => ipcRenderer.on('ui:toggle-panel', () => cb()),
+  focusWindow: () => ipcRenderer.send('win:focus'),
   setBadge: (n) => ipcRenderer.send('app:badge', Number(n) || 0),
 });

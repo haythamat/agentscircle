@@ -137,7 +137,7 @@ Radii: 6px (tiles, small controls), 8px (buttons, inputs), 10px (cards, board st
 - **Question and approval cards:** amber-tinted inset cards with options as buttons and a free-text answer.
 - **Board strip:** tile, handle, account, what it is doing, elapsed time; state tag on the right.
 - **Composer:** pinned bottom, attachment and send as icon buttons, @-suggestions popover from the caret.
-- **Settings:** a window with side navigation (Agents and accounts, Connectors, Skills, Appearance, About), not tabs.
+- **Settings:** a window with side navigation (Agents and accounts, Connectors, Skills, Appearance, Account and plan, About), not tabs.
 - **Icons:** `public/icons.js`, about 45 icons on one 24px grid with 1.6px round strokes, drawn for this app; they inherit `currentColor`. No emoji or Unicode stand-ins.
 - **Logo:** three arcs (sand, white, sky) around a centre point: a circle of agents with you in the middle. `build/icon.svg` is the app icon (rendered to `build/icon.png` by `scripts/make-logo.js`); `public/logo.svg` and `public/logo-mark.svg` are the lockup and mark.
 

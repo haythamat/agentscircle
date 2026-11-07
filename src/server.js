@@ -1187,7 +1187,7 @@ app.post('/api/plan/token', (req, res) => {
 const account = require('./account')({ url: (PKG.agentscircle && PKG.agentscircle.supabaseUrl) || '', anonKey: (PKG.agentscircle && PKG.agentscircle.supabaseKey) || '', port: PORT, vault, entitlements });
 setTimeout(() => account.refreshIfDue(), 3000);
 setInterval(() => account.refreshIfDue(), 60 * 60 * 1000).unref();
-app.get('/api/account', (_req, res) => res.json(account.state()));
+app.get('/api/account', (_req, res) => res.json({ ...account.state(), skipped: !!appSettings.get().accountSkipped }));
 app.post('/api/account/signin', (req, res) => {
   try { res.json({ url: account.begin(String((req.body || {}).provider || 'github')) }); } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -1320,7 +1320,7 @@ app.get('/api/app', (_req, res) => {
 });
 app.patch('/api/app/settings', (req, res) => {
   const allowed = {};
-  for (const k of ['updateChannel', 'onboarded', 'autoSwitch', 'projectsDir']) if (k in (req.body || {})) allowed[k] = req.body[k];
+  for (const k of ['updateChannel', 'onboarded', 'accountSkipped', 'autoSwitch', 'projectsDir']) if (k in (req.body || {})) allowed[k] = req.body[k];
   res.json(appSettings.set(allowed));
 });
 app.post('/api/app/check-tools', async (_req, res) => res.json(await checkToolFixes()));

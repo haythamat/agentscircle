@@ -41,7 +41,7 @@ async function announceUpdate(s) {
   if (key === lastUpdatePopup) return;
   lastUpdatePopup = key;
   // Wait until the first-run setup or another dialog is closed, so the popup isn't hidden behind it.
-  while ($('setupModal').classList.contains('open') || $('askModal').classList.contains('open')) await new Promise((ok) => setTimeout(ok, 3000));
+  while ($('gate').classList.contains('open') || $('setupModal').classList.contains('open') || $('askModal').classList.contains('open')) await new Promise((ok) => setTimeout(ok, 3000));
   if (s.status === 'downloading') {
     await askConfirm({ title: `AgentsCircle ${s.version} is available`, body: 'It is downloading now. You will be asked to restart when it is ready. Your sessions, accounts and connectors are kept.', ok: 'OK' });
     return;
@@ -82,47 +82,154 @@ function setupStatusHtml(st, list) {
     </div>`;
 }
 
-function accountHtml(a) {
-  if (!a.configured) return '';
-  const body = a.signedIn
-    ? `<div>Signed in as <b>${esc(a.user.name || a.user.email)}</b>${a.user.name && a.user.email ? ` <span class="hint">(${esc(a.user.email)})</span>` : ''}</div>
-       <div class="hint">Your account only adds optional paid features. Everything local works without it.${a.keychain ? '' : ' The sign-in is kept for this run only.'}</div>
-       <div style="display:flex;gap:6px;margin-top:8px"><button id="acctRefresh" style="padding:4px 10px;font-size:12px">Refresh plan</button><button id="acctOut" style="padding:4px 10px;font-size:12px">Sign out</button></div>`
-    : `<div class="hint" style="margin:0 0 8px">Optional. Sign in to use paid plans later. The free app works fully without it.</div>
-       <button class="primary" id="acctGithub">Sign in with GitHub</button>`;
-  return `<div class="psec" id="acctSection">Account</div><div class="upbox">${body}${a.error ? `<div class="err">${esc(a.error)}</div>` : ''}<div id="acctMsg" class="hint"></div></div>`;
+// ---------- account ----------
+const PLAN_NAMES = { free: 'Free', pro: 'Pro', teams: 'Teams' };
+const acctName = (a) => a.user.name || a.user.email || 'Your account';
+const acctTile = (a, cls = '') => `<span class="tile ${cls}">${esc(acctName(a).slice(0, 2).toUpperCase())}</span>`;
+
+// Opens the browser and waits for the local callback. Shared by the welcome screen and Settings → Account and plan.
+let signInWait = null;
+const stopSignIn = () => { clearInterval(signInWait); signInWait = null; };
+async function startSignIn(onDone) {
+  stopSignIn();
+  const { url } = await api('/api/account/signin', { method: 'POST', body: { provider: 'github' } });
+  window.open(url, '_blank');
+  let n = 0;
+  signInWait = setInterval(async () => {
+    const a = await api('/api/account').catch(() => null);
+    const timedOut = ++n > 300; // the server forgets a sign-in after 10 minutes
+    if (!timedOut && !(a && (a.signedIn || a.error))) return;
+    stopSignIn();
+    if (a && a.signedIn && desk && desk.focusWindow) desk.focusWindow();
+    syncAccountChip();
+    onDone(timedOut ? { ...a, error: 'Sign-in timed out. Try again.' } : a);
+  }, 2000);
+  return url;
 }
-function wireAccount(reload) {
-  const msg = (t) => { if ($('acctMsg')) $('acctMsg').textContent = t; };
+
+// Sidebar: who is signed in and on which plan, or a way to sign in. Always opens Settings → Account and plan.
+async function syncAccountChip() {
+  const a = await api('/api/account').catch(() => null);
+  const on = !!(a && a.configured);
+  $('accountFoot').style.display = on ? '' : 'none';
+  document.querySelector('#setTabs [data-set="plan"]').style.display = on ? '' : 'none';
+  if (!on) return;
+  if (!a.signedIn) { $('accountBtn').innerHTML = `${ic('user')}<span class="acct-name">Sign in</span>`; return; }
+  const p = await api('/api/plan').catch(() => ({ plan: 'free' }));
+  $('accountBtn').innerHTML = `${acctTile(a, 'sm')}<span class="acct-name">${esc(acctName(a))}</span><span class="pill">${PLAN_NAMES[p.plan]}</span>`;
+}
+$('accountBtn').onclick = () => openSettings('plan');
+window.addEventListener('focus', syncAccountChip);
+syncAccountChip();
+
+// Welcome screen before the app. Asked until the user chooses to continue without an account; never blocks the free app.
+function openGate() {
+  return new Promise((resolve) => {
+    const g = $('gate');
+    const close = () => { stopSignIn(); g.classList.remove('open'); g.innerHTML = ''; resolve(); };
+    const shell = (inner) => { g.innerHTML = `<div class="gate-in"><div class="gate-brand">${logoMark()}AgentsCircle</div>${inner}</div>`; };
+    const item = (t) => `<li>${ic('check')}<span>${t}</span></li>`;
+    const choose = (error) => {
+      shell(`<h1 id="gateTitle">Welcome to AgentsCircle</h1>
+        <p class="lead">One chat for all your coding agents. Sign in if you want paid features, or start right away.</p>
+        <div class="gate-opts">
+          <div class="gate-opt"><h2>Use an account</h2>
+            <ul>${item('Everything in the free app')}${item('Paid features when they launch: scheduled tasks, session sync and phone approvals')}${item('Your plan follows you to your other computers')}</ul>
+            <button class="primary" id="gateIn">Sign in with GitHub</button></div>
+          <div class="gate-opt"><h2>Stay without an account</h2>
+            <ul>${item('Group chat, all your agents, approvals, undo and search')}${item('Free, with no time limit')}${item('Sign in later from the sidebar if you change your mind')}</ul>
+            <button id="gateSkip">Continue without an account</button></div>
+        </div>
+        ${error ? `<div class="err" role="alert">${esc(error)}</div>` : ''}
+        <p class="gate-foot">Either way, AgentsCircle doesn't receive your code, chats or agent logins. An account stores your email, name and plan.</p>`);
+      $('gateIn').onclick = async () => {
+        $('gateIn').disabled = true;
+        try { waiting(await startSignIn((a) => (a && a.signedIn ? signedIn(a) : choose((a && a.error) || 'Sign-in did not finish. Try again.')))); }
+        catch (e) { choose(e.message); }
+      };
+      $('gateSkip').onclick = () => { api('/api/app/settings', { method: 'PATCH', body: { accountSkipped: true } }).catch(() => {}); close(); };
+      $('gateIn').focus();
+    };
+    const waiting = (url) => {
+      shell(`<h1 id="gateTitle">Finish signing in in your browser</h1>
+        <p class="lead">GitHub opened in your browser. This screen moves on by itself when you're done.</p>
+        <div class="gate-actions"><button id="gateAgain">Open the browser again</button><button class="ghost" id="gateBack">Back</button></div>`);
+      $('gateAgain').onclick = () => window.open(url, '_blank');
+      $('gateBack').onclick = () => { stopSignIn(); choose(); };
+      $('gateAgain').focus();
+    };
+    const signedIn = async (a) => {
+      const p = await api('/api/plan').catch(() => ({ plan: 'free' }));
+      shell(`<h1 id="gateTitle">You're signed in as ${esc(acctName(a))}</h1>
+        <p class="lead">You're on the ${PLAN_NAMES[p.plan]} plan. The app works the same as it does without an account. Your plan and the paid features as they launch are in Settings → Account and plan.</p>
+        ${a.error ? `<div class="err" role="alert">${esc(a.error)}</div>` : ''}
+        <div class="gate-actions"><button class="primary" id="gateGo">Continue</button></div>`);
+      $('gateGo').onclick = close;
+      $('gateGo').focus();
+    };
+    choose();
+    g.classList.add('open');
+  });
+}
+
+// Settings → Account and plan.
+const PLAN_ROWS = [
+  ['Group chat, all agents, approvals, undo and local search', 'free'],
+  ['Scheduled and recurring tasks', 'pro'], ['Sync sessions between computers', 'pro'], ['Approve from your phone', 'pro'], ['Agents that run in the cloud', 'pro'],
+  ['Shared live sessions', 'teams'], ['Shared connector and skill library', 'teams'], ['Team usage and cost dashboard', 'teams'], ['Admin rules, roles and audit log', 'teams'],
+];
+function planTableHtml(current) {
+  const levels = ['free', 'pro', 'teams'];
+  const here = (l) => (l === current ? ' here' : '');
+  const price = { free: '$0', pro: '$8 / month', teams: '$13 / seat / month' };
+  return `<table class="plantable">
+    <thead><tr><th></th>${levels.map((l) => `<th class="col${here(l)}"><b>${PLAN_NAMES[l]}</b><span>${price[l]}</span></th>`).join('')}</tr></thead>
+    <tbody>${PLAN_ROWS.map(([label, min]) => `<tr><td>${label}</td>${levels.map((l) => (levels.indexOf(l) >= levels.indexOf(min) ? `<td class="col${here(l)}">${ic('check')}</td>` : `<td class="col none${here(l)}">–</td>`)).join('')}</tr>`).join('')}</tbody>
+  </table>`;
+}
+function planStatusText(p) {
+  if (p.reason === 'offline-grace-over') return 'Your plan could not be checked for 14 days, so the app is on Free until it can reconnect.';
+  if (p.reason === 'past-due-over') return 'The last payment failed and the grace period is over, so the app is on Free. Nothing was deleted.';
+  if (p.status === 'past_due') return `The last payment failed. Paid features stay on until ${new Date(p.graceEndsAt).toLocaleDateString()}.`;
+  return p.verifiedAt ? `Last checked ${new Date(p.verifiedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}. AgentsCircle checks by itself once a day.` : 'Not checked yet.';
+}
+async function loadPlanPane() {
+  const pane = $('setPlan');
+  const [a, p] = await Promise.all([api('/api/account'), api('/api/plan')]);
+  const plan = a.signedIn ? p.plan : 'free';
+  const who = a.signedIn
+    ? `<div class="upbox"><div class="acct-who">${acctTile(a, 'lg')}<div class="grow"><b>${esc(acctName(a))}</b>${a.user.name && a.user.email ? `<span class="hint">${esc(a.user.email)}</span>` : ''}</div><button id="acctOut">Sign out</button></div>
+        ${a.keychain ? '' : '<div class="hint">The sign-in is kept for this run only.</div>'}${a.error ? `<div class="err">${esc(a.error)}</div>` : ''}</div>
+       <div class="psec">Your plan</div>
+       <div class="upbox"><div class="plan-now">${PLAN_NAMES[plan]}${p.founding ? '<span class="pill ok">Founding</span>' : ''}</div>
+        <div class="hint">${esc(planStatusText(p))}</div>
+        <div style="margin-top:8px"><button id="acctRefresh" style="padding:4px 10px;font-size:12px">Check now</button></div></div>`
+    : `<div class="upbox"><div>You're using AgentsCircle without an account. Nothing in the free app needs one.</div>
+        <div class="hint">Sign in to use paid features when they launch. AgentsCircle doesn't receive your code, chats or agent logins; an account stores your email, name and plan.</div>
+        <div style="display:flex;gap:6px;margin-top:10px"><button class="primary" id="acctGithub">Sign in with GitHub</button><button id="acctAgain" style="display:none">Open the browser again</button></div>
+        <div id="acctMsg" class="hint" role="status"></div>${a.error ? `<div class="err">${esc(a.error)}</div>` : ''}</div>`;
+  pane.innerHTML = `<h4>Account and plan</h4><p class="lead">Everything is managed here in the app. There's no web account yet.</p>
+    ${who}
+    <div class="psec">Plans</div>
+    <div class="hint" style="margin:0 0 8px">Paid plans aren't on sale yet, and the Pro and Teams features are still being built. Founding prices are shown: Pro is limited to the first 100 accounts and locked for life while active; Teams needs at least 3 seats. Regular price after launch: Pro $15 / month, Teams $25 / seat / month. <a href="https://agentscircle.dev/roadmap" target="_blank">See the roadmap</a></div>
+    <div class="upbox" style="padding:6px">${planTableHtml(plan)}</div>
+    <div class="psec">Usage</div>
+    <div class="upbox"><div>Agent usage belongs to each agent's own plan, so it's shown per account. Each session's turns, tokens and cost are in its Used tab.</div>
+      <div style="margin-top:8px"><button id="acctUsage" style="padding:4px 10px;font-size:12px">See usage per account</button></div></div>`;
+  $('acctUsage').onclick = () => setSettingsTab('accounts');
+  if ($('acctOut')) $('acctOut').onclick = async () => { await api('/api/account/signout', { method: 'POST' }); syncAccountChip(); loadPlanPane(); };
+  if ($('acctRefresh')) $('acctRefresh').onclick = async () => { $('acctRefresh').disabled = true; await api('/api/account/refresh', { method: 'POST' }).catch(() => {}); syncAccountChip(); loadPlanPane(); };
   if ($('acctGithub')) $('acctGithub').onclick = async () => {
     try {
-      const { url } = await api('/api/account/signin', { method: 'POST', body: { provider: 'github' } });
-      window.open(url, '_blank');
-      msg('Finish signing in in your browser. This updates when you are done.');
-      let n = 0;
-      const t = setInterval(async () => {
-        const a = await api('/api/account').catch(() => null);
-        if ((a && (a.signedIn || a.error)) || ++n > 100) { clearInterval(t); reload(); }
-      }, 3000);
-    } catch (e) { msg(e.message); }
+      const url = await startSignIn(() => loadPlanPane());
+      $('acctMsg').textContent = 'Finish signing in in your browser. This updates when you are done.';
+      $('acctAgain').style.display = '';
+      $('acctAgain').onclick = () => window.open(url, '_blank');
+    } catch (e) { $('acctMsg').textContent = e.message; }
   };
-  if ($('acctOut')) $('acctOut').onclick = async () => { await api('/api/account/signout', { method: 'POST' }); reload(); };
-  if ($('acctRefresh')) $('acctRefresh').onclick = async () => { $('acctRefresh').disabled = true; await api('/api/account/refresh', { method: 'POST' }).catch(() => {}); reload(); };
 }
-// Sidebar shortcut to the Account section, shown only while signed out.
-async function syncSigninBtn() {
-  const a = await api('/api/account').catch(() => null);
-  $('signinFoot').style.display = a && a.configured && !a.signedIn ? '' : 'none';
-}
-$('signinBtn').onclick = async () => {
-  openSettings('about');
-  for (let n = 0; n < 40 && !$('acctSection'); n++) await new Promise((r) => setTimeout(r, 50));
-  if ($('acctSection')) $('acctSection').scrollIntoView({ block: 'start' });
-};
-syncSigninBtn();
 async function loadAbout() {
   const pane = $('setAbout');
-  syncSigninBtn();
   const info = await api('/api/app');
   if (typeof loadUsageCounts === 'function') await loadUsageCounts();
   const d = desk ? await desk.appInfo() : null;
@@ -145,7 +252,6 @@ async function loadAbout() {
         <div class="hint">Updates download in the background and install when you restart AgentsCircle. Your sessions, accounts and connectors are kept.</div>
       </div>` : '<div class="hint">Automatic updates are part of the desktop app. Running from a terminal, update by downloading the latest version.</div>'}
     ${statusHtml}
-    ${accountHtml(await api('/api/account').catch(() => ({ configured: false })))}
     <div class="psec">Agent settings</div>
     <div class="upbox">
       <div>How AgentsCircle runs each agent: revision ${info.tools.revision} (${info.tools.source === 'update' ? 'updated fix' : 'built in'}).</div>
@@ -161,7 +267,6 @@ async function loadAbout() {
   if ($('upInstall')) $('upInstall').onclick = () => desk.installUpdate();
   if ($('upChannel')) $('upChannel').onchange = async () => { await desk.setChannel($('upChannel').value); api('/api/app/settings', { method: 'PATCH', body: { updateChannel: $('upChannel').value } }).catch(() => {}); loadAbout(); };
   if ($('toolsCheck')) $('toolsCheck').onclick = async () => { $('toolsCheck').disabled = true; await api('/api/app/check-tools', { method: 'POST' }); loadAbout(); };
-  wireAccount(loadAbout);
   if ($('statusRescan')) $('statusRescan').onclick = async () => { $('statusRescan').disabled = true; await api('/api/setup/rescan', { method: 'POST' }); agents = await api('/api/agents'); loadAbout(); };
   pane.querySelectorAll('[data-status-login]').forEach((b) => { b.onclick = () => openSignin(b.dataset.statusLogin, { onDone: loadAbout }); });
   if ($('openData')) $('openData').onclick = () => desk.openPath('data');
@@ -245,9 +350,11 @@ async function openSetup(state) {
   };
 }
 
-// Show setup on first launch.
+// On launch: the account choice, then setup if it hasn't run.
 (async () => {
   try {
+    const a = await api('/api/account').catch(() => null);
+    if (a && a.configured && !a.signedIn && !a.skipped) await openGate();
     const st = await api('/api/setup');
     if (!st.onboarded) openSetup(st);
     else if (typeof maybeAskUsageCounts === 'function') setTimeout(maybeAskUsageCounts, 4000);

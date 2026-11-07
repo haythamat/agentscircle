@@ -31,7 +31,7 @@
   <div class="side-label">Sessions</div>
   <div class="sessions" id="sessions"></div>
   <div class="sessions" id="searchResults" style="display:none"></div>
-  <div class="foot foot-signin" id="signinFoot" style="display:none"><button class="ghost" id="signinBtn">Sign in</button></div>
+  <div class="foot foot-account" id="accountFoot" style="display:none"><button class="ghost" id="accountBtn"></button></div>
   <div class="foot"><button class="ghost" id="acctBtn"></button>
     <div class="themes" id="themes" role="radiogroup" aria-label="Theme"><button data-t="light" data-tip="Light"></button><button data-t="system" data-tip="Match your computer"></button><button data-t="dark" data-tip="Dark"></button></div></div>
 </aside>
@@ -81,6 +81,7 @@
   <div id="panelBody"></div>
 </section>
 
+<div class="gate" id="gate" role="dialog" aria-modal="true" aria-labelledby="gateTitle"></div>
 <div class="modal" id="setupModal">
   <div class="card" id="setupCard" style="width:min(720px,95vw)"></div>
 </div>
@@ -186,6 +187,7 @@
         <button data-set="connectors"><span data-ic="plug"></span>Connectors</button>
         <button data-set="skills"><span data-ic="layers"></span>Skills</button>
         <button data-set="appearance"><span data-ic="palette"></span>Appearance</button>
+        <button data-set="plan" style="display:none"><span data-ic="user"></span>Account and plan</button>
         <button data-set="about"><span data-ic="info"></span>About</button>
       </div>
       <span class="spacer"></span>
@@ -214,6 +216,7 @@
     </div>
     <div id="setConnectors" style="display:none"></div>
     <div id="setSkills" style="display:none"></div>
+    <div id="setPlan" style="display:none"></div>
     <div id="setAbout" style="display:none"></div>
     <div id="setAppearance" style="display:none">
       <h4>Appearance</h4>
@@ -908,8 +911,9 @@ function openAccounts() {
   $('acctModal').classList.add('open'); renderAccounts();
 }
 function setSettingsTab(tab) {
-  for (const [k, id] of [['accounts', 'setAccounts'], ['connectors', 'setConnectors'], ['skills', 'setSkills'], ['appearance', 'setAppearance'], ['about', 'setAbout']]) $(id).style.display = k === tab ? '' : 'none';
+  for (const [k, id] of [['accounts', 'setAccounts'], ['connectors', 'setConnectors'], ['skills', 'setSkills'], ['appearance', 'setAppearance'], ['plan', 'setPlan'], ['about', 'setAbout']]) $(id).style.display = k === tab ? '' : 'none';
   if (tab === 'about' && typeof loadAbout === 'function') loadAbout();
+  if (tab === 'plan' && typeof loadPlanPane === 'function') loadPlanPane();
   if (tab === 'skills' && typeof loadSkills === 'function') loadSkills();
   document.querySelectorAll('#setTabs button').forEach(b => b.classList.toggle('on', b.dataset.set === tab));
   if (tab === 'connectors' && typeof loadConnectors === 'function') loadConnectors();
