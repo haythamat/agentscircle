@@ -52,12 +52,43 @@ async function announceUpdate(s) {
 
 // ---------- Settings → About ----------
 const UPDATE_TEXT = { idle: 'Not checked yet.', checking: 'Checking for updates…', downloading: 'Downloading the new version…', 'up-to-date': 'You have the latest version.', ready: 'The new version is ready.', error: 'Couldn\'t check for updates.', dev: 'Updates are off while running from source.' };
+// Setup status, always reachable (the first-run screen only shows once). Same facts, plus the fix for each row.
+function setupStatusHtml(st, list) {
+  const isWin = navigator.platform.toLowerCase().startsWith('win');
+  const row = (a) => {
+    const cmd = a.install ? (isWin ? a.install.ps : a.install.sh) : '';
+    const acct = list.find((x) => x.tool === a.tool && x.canSignIn);
+    let status = '', fix = '';
+    if (!a.installed) {
+      status = '<span class="pill warn">not installed</span>';
+      fix = cmd ? `Install: <code>${esc(cmd)}</code>${a.install.docs ? ` · <a href="${esc(a.install.docs)}" target="_blank">install guide</a>` : ''}` : 'Install it from the tool\'s website.';
+    } else if (a.signedIn) {
+      status = '<span class="pill ok">ready</span>';
+    } else if (a.checking) {
+      status = '<span class="pill">checking…</span>';
+    } else {
+      status = a.problemState === 'signedout' ? '<span class="pill bad">signed out</span>' : a.problem ? '<span class="pill bad">not working</span>' : '<span class="pill">installed</span>';
+      fix = a.problem ? esc(a.problem) : 'Sign in once so AgentsCircle can use it.';
+      if (acct) fix += ` <button data-status-login="${esc(acct.id)}" style="padding:2px 8px;font-size:12px;margin-left:6px">Sign in</button>`;
+    }
+    return `<div class="setuprow"><i class="dot" style="background:${a.color}"></i><div class="grow"><b>${esc(a.name)}</b> ${status}${fix ? `<div class="hint" style="margin:3px 0 0">${fix}</div>` : ''}</div></div>`;
+  };
+  return `<div class="psec">Setup status</div>
+    <div class="upbox">
+      ${st.agents.map(row).join('')}
+      <div class="setuprow"><i class="dot" style="background:var(--muted)"></i><div class="grow"><b>git</b> ${st.git ? '<span class="pill ok">ready</span>' : '<span class="pill warn">not found</span>'}${st.git ? '' : '<div class="hint" style="margin:3px 0 0">Install from git-scm.com. Needed for undo, change review and parallel branches.</div>'}</div></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:8px"><button id="statusRescan" style="padding:4px 10px;font-size:12px">Check again</button></div>
+      <div class="hint">Agent CLI updates aren't tracked here. A fix for an agent's changed behaviour arrives through the automatic fixes below; the app's own update is under Updates.</div>
+    </div>`;
+}
+
 async function loadAbout() {
   const pane = $('setAbout');
   const info = await api('/api/app');
   if (typeof loadUsageCounts === 'function') await loadUsageCounts();
   const d = desk ? await desk.appInfo() : null;
   const u = d ? d.update : null;
+  const statusHtml = setupStatusHtml(await api('/api/setup'), await api('/api/agents'));
   pane.innerHTML = `
     <h4>About</h4><p class="lead">Version, updates and where your data lives.</p>
     <div class="upbox"><div class="h" style="font-size:16px;font-weight:650;display:flex;align-items:center;gap:10px">${logoMark()}<span style="font:600 19px/1 var(--font-cond)">AgentsCircle</span><span class="pill">${esc(info.version)}</span></div>
@@ -74,6 +105,7 @@ async function loadAbout() {
         <select id="upChannel" class="sel" style="width:auto"><option value="stable" ${d.channel === 'stable' ? 'selected' : ''}>Stable (recommended)</option><option value="beta" ${d.channel === 'beta' ? 'selected' : ''}>Beta: new features first, may have rough edges</option></select>
         <div class="hint">Updates download in the background and install when you restart AgentsCircle. Your sessions, accounts and connectors are kept.</div>
       </div>` : '<div class="hint">Automatic updates are part of the desktop app. Running from a terminal, update by downloading the latest version.</div>'}
+    ${statusHtml}
     <div class="psec">Agent settings</div>
     <div class="upbox">
       <div>How AgentsCircle runs each agent: revision ${info.tools.revision} (${info.tools.source === 'update' ? 'updated fix' : 'built in'}).</div>
@@ -89,6 +121,8 @@ async function loadAbout() {
   if ($('upInstall')) $('upInstall').onclick = () => desk.installUpdate();
   if ($('upChannel')) $('upChannel').onchange = async () => { await desk.setChannel($('upChannel').value); api('/api/app/settings', { method: 'PATCH', body: { updateChannel: $('upChannel').value } }).catch(() => {}); loadAbout(); };
   if ($('toolsCheck')) $('toolsCheck').onclick = async () => { $('toolsCheck').disabled = true; await api('/api/app/check-tools', { method: 'POST' }); loadAbout(); };
+  if ($('statusRescan')) $('statusRescan').onclick = async () => { $('statusRescan').disabled = true; await api('/api/setup/rescan', { method: 'POST' }); agents = await api('/api/agents'); loadAbout(); };
+  pane.querySelectorAll('[data-status-login]').forEach((b) => { b.onclick = () => openSignin(b.dataset.statusLogin, { onDone: loadAbout }); });
   if ($('openData')) $('openData').onclick = () => desk.openPath('data');
   if ($('openLogs')) $('openLogs').onclick = () => desk.openPath('logs');
   if (typeof wireUsageCounts === 'function') wireUsageCounts(loadAbout);
