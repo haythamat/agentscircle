@@ -125,7 +125,7 @@ function saveSession(s) {
   fs.writeFileSync(sessionFile(s.id), JSON.stringify(persist, null, 2));
 }
 
-const summary = (s) => ({ id: s.id, name: s.name, folder: s.folder, folderProblem: (folderProblem(s.folder, false) || {}).code || null, members: s.members, updatedAt: s.updatedAt, busy: busy(s), waiting: s.messages.some((m) => m.pending && m.waiting), running: runningIds(s), handoffs: s.handoffs !== false, summarized: s.summary ? s.summary.count : 0, context: contextInfo(s), agentModels: s.agentModels || {}, mode: s.mode === 'parallel' ? 'parallel' : 'shared' });
+const summary = (s) => ({ id: s.id, name: s.name, folder: s.folder, folderProblem: (folderProblem(s.folder, false) || {}).code || null, folderDrive: (folderProblem(s.folder, false) || {}).drive || null, members: s.members, updatedAt: s.updatedAt, busy: busy(s), waiting: s.messages.some((m) => m.pending && m.waiting), running: runningIds(s), handoffs: s.handoffs !== false, summarized: s.summary ? s.summary.count : 0, context: contextInfo(s), agentModels: s.agentModels || {}, mode: s.mode === 'parallel' ? 'parallel' : 'shared' });
 
 // ---------- websocket broadcast ----------
 const subscribers = new Map(); // sessionId -> Set<ws>
@@ -648,6 +648,12 @@ function folderProblem(folder, deep = true) {
     if (deep) fs.readdirSync(folder);
     return null;
   } catch (e) {
+    // On an external drive that isn't plugged in (macOS /Volumes/<drive>, Linux /media or /mnt, Windows D:\ …).
+    const drive = (/^\/Volumes\/[^/]+/.exec(folder) || /^\/(?:media|run\/media)\/[^/]+\/[^/]+/.exec(folder) || /^\/mnt\/[^/]+/.exec(folder) || /^[A-Za-z]:\\/.exec(folder) || [])[0];
+    if ((e.code === 'ENOENT' || e.code === 'ENOTDIR') && drive && !fs.existsSync(drive)) {
+      const name = drive.replace(/^\/Volumes\//, '').replace(/\\$/, '');
+      return { code: 'drive', drive: name, message: `The drive "${name}" that holds this session's folder isn't connected. Plug it in, wait for it to appear in Finder, then click Check again or Retry.` };
+    }
     if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return { code: 'missing', message: `This session's folder isn't there any more: ${folder}. It was probably moved, renamed or deleted. Choose where it is now (the banner above the chat), or start a new session in its new place.` };
     if (e.code === 'EPERM' || e.code === 'EACCES') return { code: 'denied', message: `AgentsCircle isn't allowed to open this session's folder: ${folder}. On a Mac, open System Settings → Privacy & Security → Files and Folders (or Full Disk Access) and allow AgentsCircle, then retry.` };
     return { code: 'error', message: `Can't open this session's folder (${folder}): ${e.message}` };

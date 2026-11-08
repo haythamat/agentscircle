@@ -350,10 +350,13 @@ function renderFolderBanner() {
   const old = $('folderBanner'); if (old) old.remove();
   if (!current || !current.folderProblem) return;
   const denied = current.folderProblem === 'denied';
+  const drive = current.folderProblem === 'drive';
   const text = denied
     ? `AgentsCircle isn't allowed to open this folder. Allow it in System Settings → Privacy & Security → Files and Folders, then click Check again.`
-    : `This session's folder can't be found: <code>${esc(current.folder)}</code>. Agents can't work until you choose where it is now.`;
-  $('memberbar').insertAdjacentHTML('afterend', `<div class="gitbanner folderbanner" id="folderBanner" role="alert">${ic('alert')}<span>${text}</span>${denied ? '' : '<button id="folderPick" class="primary">Choose folder…</button>'}<button id="folderRecheck">Check again</button></div>`);
+    : drive
+      ? `The drive <b>${esc(current.folderDrive || '')}</b> with this session's folder isn't connected. Plug it in, then click Check again.`
+      : `This session's folder can't be found: <code>${esc(current.folder)}</code>. Agents can't work until you choose where it is now.`;
+  $('memberbar').insertAdjacentHTML('afterend', `<div class="gitbanner folderbanner" id="folderBanner" role="alert">${ic('alert')}<span>${text}</span>${drive ? '<button id="folderRecheck" class="primary">Check again</button><button id="folderPick">Choose another folder…</button>' : `${denied ? '' : '<button id="folderPick" class="primary">Choose folder…</button>'}<button id="folderRecheck">Check again</button>`}</div>`);
   $('folderRecheck').onclick = () => openSession(current.id);
   if ($('folderPick')) $('folderPick').onclick = async () => {
     let p = null;
@@ -565,7 +568,7 @@ function msgHtml(m) {
   }
   else {
     const st = m.pending ? (m.waiting ? `<span class="st waiting">${(m.questions || []).some(q => q.status === 'pending') ? 'Question' : 'Needs OK'}</span>` : '<span class="st working">Working</span>')
-      : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout', 'signin', 'model', 'folder'].includes(m.status) ? `<span class="st ${['signin', 'model', 'folder'].includes(m.status) ? 'error' : m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : m.status === 'signin' ? 'Signed out' : m.status === 'model' ? 'Model refused' : m.status === 'folder' ? 'Folder missing' : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';
+      : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout', 'signin', 'model', 'folder'].includes(m.status) ? `<span class="st ${['signin', 'model', 'folder'].includes(m.status) ? 'error' : m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : m.status === 'signin' ? 'Signed out' : m.status === 'model' ? 'Model refused' : m.status === 'folder' ? (m.folderProblem === 'drive' ? 'Drive not connected' : m.folderProblem === 'denied' ? 'Folder blocked' : 'Folder missing') : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';
     who = `${tile(m.agent, color)}<span class="handle" data-tip="${a ? esc(acctTitle(a)) : 'removed agent'}">@${m.agent}</span>${acct ? `<span class="acct">${esc(acct)}</span>` : ''}<span class="meta">${meta}</span>${m.branch ? `<span class="branchtag" data-tip="Worked on its own branch: ${esc(m.branch)}">${ic('branch', 'sm')}own branch</span>` : ''}<span class="state">${st}</span>`;
   }
   const copyBtn = (m.text || '').trim() && !(m.pending && !m.text) ? `<button class="copybtn msgcopy" data-copymsg="${m.id}" data-tip="Copy reply" aria-label="Copy this message">${ic('copy', 'sm')}</button>` : '';
