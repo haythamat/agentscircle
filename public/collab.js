@@ -15,12 +15,12 @@ function renderPending() {
 async function uploadFiles(files) {
   if (!current) return;
   for (const f of files) {
-    if (f.size > 25 * 1024 * 1024) { alert(`${f.name} is larger than 25 MB.`); continue; }
+    if (f.size > 1024 * 1024 * 1024) { alert(`${f.name} is over 1 GB. Put it in the project folder and mention its name instead.`); continue; }
     uploadsBusy++; renderPending();
     try {
       const name = f.name && f.name !== 'image.png' ? f.name : `screenshot-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}.png`;
       const r = await fetch(`/api/sessions/${current.id}/uploads`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'x-filename': encodeURIComponent(name) }, body: f });
-      const j = await r.json();
+      const j = await r.json().catch(() => ({ error: `The upload failed (${r.status}).` }));
       if (!r.ok) throw new Error(j.error || 'Upload failed');
       pending.push(j);
     } catch (e) { alert(e.message); }
