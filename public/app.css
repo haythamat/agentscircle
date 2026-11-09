@@ -1040,3 +1040,6 @@ button.ign-on:hover, button.ghost.ign-on:hover { filter: brightness(1.1); }
 .plantable .here { background: var(--sel); }
 .plantable td svg { width: 15px; height: 15px; vertical-align: -3px; color: var(--ok); }
 .plantable td.none { color: var(--faint); }
+.gitbanner.folderbanner { border-color: var(--bad-soft, rgba(214,69,69,.4)); background: var(--danger-bg, rgba(214,69,69,.08)); }
+.gitbanner.folderbanner .ic { color: var(--danger, #d64545); }
+.gitbanner.folderbanner code { font: 12px var(--mono); word-break: break-all; }

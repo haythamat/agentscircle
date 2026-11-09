@@ -125,7 +125,7 @@ function saveSession(s) {
   fs.writeFileSync(sessionFile(s.id), JSON.stringify(persist, null, 2));
 }
 
-const summary = (s) => ({ id: s.id, name: s.name, folder: s.folder, members: s.members, updatedAt: s.updatedAt, busy: busy(s), waiting: s.messages.some((m) => m.pending && m.waiting), running: runningIds(s), handoffs: s.handoffs !== false, summarized: s.summary ? s.summary.count : 0, context: contextInfo(s), agentModels: s.agentModels || {}, mode: s.mode === 'parallel' ? 'parallel' : 'shared' });
+const summary = (s) => ({ id: s.id, name: s.name, folder: s.folder, folderProblem: (folderProblem(s.folder, false) || {}).code || null, folderDrive: (folderProblem(s.folder, false) || {}).drive || null, members: s.members, updatedAt: s.updatedAt, busy: busy(s), waiting: s.messages.some((m) => m.pending && m.waiting), running: runningIds(s), handoffs: s.handoffs !== false, summarized: s.summary ? s.summary.count : 0, context: contextInfo(s), agentModels: s.agentModels || {}, mode: s.mode === 'parallel' ? 'parallel' : 'shared' });
 
 // ---------- websocket broadcast ----------
 const subscribers = new Map(); // sessionId -> Set<ws>
@@ -639,6 +639,27 @@ function modelFor(s, agent) {
 
 // A tool's program can move while the app is open (Claude Code updates itself, or you reinstall
 // it). Before each run, check it's still there; if not, look for it again.
+// Is the session's folder there, and may AgentsCircle use it? A folder that was moved, renamed or
+// deleted (or that macOS hasn't let the app open) makes every agent fail at once, with "spawn ENOENT".
+function folderProblem(folder, deep = true) {
+  try {
+    if (!fs.statSync(folder).isDirectory()) return { code: 'notdir', message: `This session's folder isn't a folder any more: ${folder}` };
+    fs.accessSync(folder, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
+    if (deep) fs.readdirSync(folder);
+    return null;
+  } catch (e) {
+    // On an external drive that isn't plugged in (macOS /Volumes/<drive>, Linux /media or /mnt, Windows D:\ …).
+    const drive = (/^\/Volumes\/[^/]+/.exec(folder) || /^\/(?:media|run\/media)\/[^/]+\/[^/]+/.exec(folder) || /^\/mnt\/[^/]+/.exec(folder) || /^[A-Za-z]:\\/.exec(folder) || [])[0];
+    if ((e.code === 'ENOENT' || e.code === 'ENOTDIR') && drive && !fs.existsSync(drive)) {
+      const name = drive.replace(/^\/Volumes\//, '').replace(/\\$/, '');
+      return { code: 'drive', drive: name, message: `The drive "${name}" that holds this session's folder isn't connected. Plug it in, wait for it to appear in Finder, then click Check again or Retry.` };
+    }
+    if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return { code: 'missing', message: `This session's folder isn't there any more: ${folder}. It was probably moved, renamed or deleted. Choose where it is now (the banner above the chat), or start a new session in its new place.` };
+    if (e.code === 'EPERM' || e.code === 'EACCES') return { code: 'denied', message: `AgentsCircle isn't allowed to open this session's folder: ${folder}. On a Mac, open System Settings → Privacy & Security → Files and Folders (or Full Disk Access) and allow AgentsCircle, then retry.` };
+    return { code: 'error', message: `Can't open this session's folder (${folder}): ${e.message}` };
+  }
+}
+
 function freshTool(agent) {
   const t = accounts.tool(agent);
   const rc = t && t.resolvedCommand;
@@ -660,6 +681,13 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
       catch (e) { addMessage(s, { role: 'system', text: `Couldn't give @${agent.id} its own branch: ${e.message}` }); s.runs.delete(agent.id); broadcastStatus(s); return resolve(null); }
     }
     const workdir = wt ? wt.dir : s.folder;
+    const fp = folderProblem(workdir);
+    if (fp) {
+      const r = addMessage(s, { role: 'agent', agent: agent.id, tool: tool.id, replyTo: triggerMsg.id, text: fp.message, status: 'folder', folderProblem: fp.code, startedAt: now(), endedAt: now(), activity: [], tools: [] });
+      void r;
+      s.runs.delete(agent.id); broadcastStatus(s); broadcast(s.id, { type: 'session', session: { ...summary(s), defaultAgent: s.defaultAgent } });
+      return resolve(null);
+    }
     const runKey = crypto.randomBytes(8).toString('hex');
     usageCounts.count(['claude', 'codex', 'cursor', 'opencode'].includes(tool.id) ? `agent_${tool.id}` : 'agent_other');
     if (wt) usageCounts.count('mode_parallel');
@@ -714,10 +742,24 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
     let stderr = '';
     let timedOut = false;
 
-    let missing = false;
-    const child = spawn(tool.resolvedCommand || tool.command, args, {
-      cwd: workdir, env, windowsHide: true, detached: !IS_WIN, stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    let missing = false, folderGone = null, brokenTool = false, tooBig = false;
+    let child;
+    try {
+      child = spawn(tool.resolvedCommand || tool.command, args, {
+        cwd: workdir, env, windowsHide: true, detached: !IS_WIN, stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (e) {
+      // Some failures (an instruction text too long for the system) throw here instead of emitting 'error'.
+      connectors.cleanup(inj);
+      if (promptFile) fs.rm(promptFile, { force: true }, () => {});
+      const msg = e.code === 'E2BIG'
+        ? `This turn's instructions were too long for your computer to pass to ${tool.name}. Summarize the session (Usage → Memory → Summarize now), or remove some session context, then retry.`
+        : `Couldn't start ${tool.name}: ${e.message}`;
+      runs.delete(runKey);
+      updateMessage(s, reply, { text: msg, pending: false, status: 'error', endedAt: now() }, true);
+      s.runs.delete(agent.id); broadcastStatus(s);
+      return resolve(null);
+    }
     const run = { child, agentId: agent.id, messageId: reply.id, runKey, stopRequested: false };
     s.runs.set(agent.id, run);
     broadcastStatus(s);
@@ -740,7 +782,17 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
     let outTail = ''; // raw output, for explaining a failure when the tool printed its error outside its JSON events
     child.stdout.on('data', (d) => { parser.feed(d); outTail = (outTail + d).slice(-8000); });
     child.stderr.on('data', (d) => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-20000); });
-    child.on('error', (err) => { if (err.code === 'ENOENT') missing = true; stderr += `\n${err.message}`; });
+    child.on('error', (err) => {
+      if (err.code === 'ENOENT') {
+        // spawn says ENOENT both when the program is missing and when the folder it should start in is.
+        const cmd = tool.resolvedCommand || tool.command;
+        const fp2 = folderProblem(workdir);
+        if (fp2) folderGone = fp2; else if (!path.isAbsolute(cmd) || !fs.existsSync(cmd)) missing = true; else brokenTool = true;
+      }
+      if (err.code === 'EACCES' || err.code === 'EPERM') brokenTool = true;
+      if (err.code === 'E2BIG') tooBig = true;
+      stderr += `\n${err.message}`;
+    });
 
     // Always close stdin so agents never wait for more input.
     child.stdin.on('error', () => {});
@@ -787,15 +839,19 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
           ? `\n\n_@${agent.id} hit its usage limit${until}. Switching to @${next.id}, which continues the same conversation._`
           : `\n\n_@${agent.id} looks like it hit its usage limit${until}.${spare.length ? ` Try ${spare.join(' or ')} instead, or turn on automatic switching in Settings.` : ' Add another account of the same tool to keep going when this happens.'}_`;
       }
+      if (folderGone) final = folderGone.message;
+      else if (tooBig) final = `This turn's instructions were too long for your computer to pass to ${tool.name}. Summarize the session (Usage → Memory → Summarize now), or remove some session context, then retry.`;
+      else if (brokenTool) final = `${tool.name} is installed at ${tool.resolvedCommand || tool.command}, but your computer couldn't start it (${(stderr.trim().split('\n').pop() || '').slice(0, 200)}). This usually means it was half-updated or something it needs (such as Node.js) is missing. Run \`${tool.command} --version\` in Terminal; if that fails too, reinstall it from Settings → Agents and accounts.`;
       // Signed out: the tool's saved sign-in expired or was revoked. Say how to fix it, with a button.
-      if (missing) {
+      if (missing && !folderGone) {
         final = `AgentsCircle can't find ${tool.name} on this computer (the \`${tool.command}\` command). If you just updated, reinstalled or signed in to it, click Retry. If it keeps happening, open Terminal and run \`which ${tool.command}\` to see where it is, or reinstall it from Settings → Agents and accounts.`;
         accounts.reloadTools(); broadcastAgents();
       }
+      if (folderGone) missing = true; // no model, sign-in or limit checks below
       const modelRefused = !missing && !stopped && !timedOut && !limited && code !== 0 && health.MODEL_RE.test(`${final}\n${stderr.slice(-2000)}`);
       const signin = !modelRefused && !missing && !stopped && !timedOut && !limited && code !== 0 && SIGNIN_RE.test(`${final}\n${stderr.slice(-2000)}`);
       if (signin) final = `${final || 'Sign-in failed.'}\n\n_@${agent.id}'s sign-in to ${tool.name} has expired. Sign in again, then retry._`;
-      const status = timedOut ? 'timeout' : stopped ? 'stopped' : limited ? 'limited' : signin ? 'signin' : modelRefused ? 'model' : code !== 0 ? 'error' : 'done';
+      const status = folderGone ? 'folder' : timedOut ? 'timeout' : stopped ? 'stopped' : limited ? 'limited' : signin ? 'signin' : modelRefused ? 'model' : code !== 0 ? 'error' : 'done';
       // The one-line status the agent was asked to end with: shown on its own, taken out of the text.
       let statusLine = null;
       {
@@ -1624,6 +1680,14 @@ app.patch('/api/sessions/:id', (req, res) => {
     if (s.defaultAgent) appSettings.set({ defaultAgent: s.defaultAgent }); // new sessions start with it too
   }
   if ('handoffs' in req.body) s.handoffs = !!req.body.handoffs;
+  // The folder moved: point the session at its new place (only while nothing runs).
+  if (req.body.folder) {
+    if (busy(s)) return res.status(409).json({ error: 'Wait until the agents finish before moving the session.' });
+    const folder = path.resolve(expandHome(String(req.body.folder).trim()));
+    const fp = folderProblem(folder);
+    if (fp) return res.status(400).json({ error: fp.code === 'missing' ? `Folder not found: ${folder}` : fp.message });
+    if (folder !== s.folder) { const old = s.folder; s.folder = folder; addMessage(s, { role: 'system', text: `This session now works in ${folder} (it was in ${old}).` }); }
+  }
   if ('mode' in req.body) {
     if (busy(s)) return res.status(409).json({ error: 'Wait until the agents finish before switching mode.' });
     if (req.body.mode === 'parallel' && !checkpoints.isRepo(s.folder)) return res.status(400).json({ error: 'Parallel mode needs git in this folder. Turn it on with the banner at the top of the chat.' });
@@ -1982,16 +2046,27 @@ app.post('/api/sessions/:id/git-init', (req, res) => {
 });
 
 // ---------- attachments ----------
-app.post('/api/sessions/:id/uploads', express.raw({ type: () => true, limit: '25mb' }), (req, res) => {
+// Attachments: streamed to disk (videos and big files are fine), up to 1 GB.
+const UPLOAD_MAX = 1024 * 1024 * 1024;
+app.post('/api/sessions/:id/uploads', (req, res) => {
   const s = getSession(req, res); if (!s) return;
+  const fp = folderProblem(s.folder);
+  if (fp) return res.status(400).json({ error: fp.message, code: fp.code });
   const name = decodeURIComponent(String(req.headers['x-filename'] || 'file')).replace(/[^\w.\- ]+/g, '_').slice(-120) || 'file';
   const dir = path.join(s.folder, '.agentscircle', 'uploads');
-  fs.mkdirSync(dir, { recursive: true });
-  ensureExcluded(s.folder); // keep uploads out of git (and out of checkpoints)
+  try { fs.mkdirSync(dir, { recursive: true }); ensureExcluded(s.folder); }
+  catch (e) { return res.status(400).json({ error: `Couldn't save it in the session folder: ${e.message}` }); }
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
   const file = `${stamp}-${name}`;
-  fs.writeFileSync(path.join(dir, file), req.body || Buffer.alloc(0));
-  res.json({ path: `.agentscircle/uploads/${file}`, name, size: (req.body || []).length, kind: kindOf(file) });
+  const full = path.join(dir, file);
+  const out = fs.createWriteStream(full);
+  let size = 0, failed = false;
+  const fail = (status, error) => { if (failed) return; failed = true; out.destroy(); fs.rm(full, { force: true }, () => {}); if (!res.headersSent) res.status(status).json({ error }); };
+  req.on('data', (d) => { size += d.length; if (size > UPLOAD_MAX) { fail(413, 'That file is over 1 GB. Put it in the project folder and mention its name instead.'); req.destroy(); } });
+  req.on('error', () => fail(400, 'The upload was interrupted. Try again.'));
+  out.on('error', (e) => fail(400, `Couldn't save it: ${e.message}`));
+  out.on('finish', () => { if (!failed) res.json({ path: `.agentscircle/uploads/${file}`, name, size, kind: kindOf(file) }); });
+  req.pipe(out);
 });
 
 // ---------- session context ----------
@@ -2519,6 +2594,18 @@ app.get('/api/sessions/:id/terminal', (req, res) => {
   const s = getSession(req, res); if (!s) return;
   const t = terminals.get(s.id);
   res.json({ ...(t ? { ...t, buffer: undefined } : { alive: false }), ...terminals.available() });
+});
+
+// ---------- errors as JSON ----------
+// Express's own error page is HTML, which the app can't read ("Unexpected token '<'"). Answer in JSON.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status || err.statusCode || 500;
+  let error = err.expose && err.message ? err.message : `Something went wrong: ${err.message || err}`;
+  if (err.type === 'entity.too.large') error = `That's too big to send (the limit is ${err.limit ? Math.round(err.limit / 1048576) + ' MB' : 'reached'}). For bigger files, put them in the project folder and mention their name.`;
+  if (err.code === 'EPERM' || err.code === 'EACCES') error = `AgentsCircle isn't allowed to write there (${err.path || 'the session folder'}). On a Mac, allow AgentsCircle in System Settings → Privacy & Security → Files and Folders.`;
+  if (err.code === 'ENOENT' && err.path) error = `Not found: ${err.path}. If you moved or renamed the project folder, choose where it is now.`;
+  res.status(status >= 400 && status < 600 ? status : 500).json({ error, code: err.code || err.type || undefined });
 });
 
 // ---------- start ----------

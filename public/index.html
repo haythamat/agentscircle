@@ -335,12 +335,36 @@ async function openSession(id) {
   if (typeof refreshBranches === 'function' && (s.mode === 'parallel' || Object.keys(s.worktrees || {}).length)) refreshBranches();
   const gb = $('gitBanner');
   if (gb) gb.remove();
-  if (!s.isRepo) {
+  renderFolderBanner();
+  if (!s.isRepo && !s.folderProblem) {
     $('memberbar').insertAdjacentHTML('afterend', `<div class="gitbanner" id="gitBanner">${ic('info')}<span>Undo and change review need git in this folder.</span><button id="gitInit">Turn on git</button><span class="hint" style="margin:0">Creates a .git folder; nothing is committed.</span></div>`);
     $('gitInit').onclick = async () => { await api(`/api/sessions/${s.id}/git-init`, { method: 'POST' }); openSession(s.id); };
   }
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
   $('input').focus();
+}
+
+// The session's folder was moved, renamed or deleted, or the Mac won't let the app open it:
+// every agent would fail, so say so plainly and let the user point the session at its new place.
+function renderFolderBanner() {
+  const old = $('folderBanner'); if (old) old.remove();
+  if (!current || !current.folderProblem) return;
+  const denied = current.folderProblem === 'denied';
+  const drive = current.folderProblem === 'drive';
+  const text = denied
+    ? `AgentsCircle isn't allowed to open this folder. Allow it in System Settings → Privacy & Security → Files and Folders, then click Check again.`
+    : drive
+      ? `The drive <b>${esc(current.folderDrive || '')}</b> with this session's folder isn't connected. Plug it in, then click Check again.`
+      : `This session's folder can't be found: <code>${esc(current.folder)}</code>. Agents can't work until you choose where it is now.`;
+  $('memberbar').insertAdjacentHTML('afterend', `<div class="gitbanner folderbanner" id="folderBanner" role="alert">${ic('alert')}<span>${text}</span>${drive ? '<button id="folderRecheck" class="primary">Check again</button><button id="folderPick">Choose another folder…</button>' : `${denied ? '' : '<button id="folderPick" class="primary">Choose folder…</button>'}<button id="folderRecheck">Check again</button>`}</div>`);
+  $('folderRecheck').onclick = () => openSession(current.id);
+  if ($('folderPick')) $('folderPick').onclick = async () => {
+    let p = null;
+    if (typeof desk !== 'undefined' && desk && desk.pickFolder) p = await desk.pickFolder();
+    else p = prompt('Where is the folder now? Paste its full path.', current.folder); // not reached in the desktop app
+    if (!p) return;
+    try { await api(`/api/sessions/${current.id}`, { method: 'PATCH', body: { folder: p } }); openSession(current.id); } catch (e) { alert(e.message); }
+  };
 }
 
 // The open session was deleted (here or in another window): back to the start screen.
@@ -429,7 +453,7 @@ document.addEventListener('keydown', (e) => {
 function turnActionsHtml(m) {
   if ((m.role !== 'agent' && m.kind !== 'apply') || m.pending) return '';
   // A failed turn: sign in again (when that's the cause) and run the same message again.
-  if (m.role === 'agent' && ['signin', 'error', 'timeout'].includes(m.status) && !m.retried && !m.switchedTo) {
+  if (m.role === 'agent' && ['signin', 'error', 'timeout', 'folder'].includes(m.status) && !m.retried && !m.switchedTo) {
     return `<div class="turnacts">${m.status === 'signin' ? `<button class="primary" data-signin="${esc(m.agent)}">${ic('key', 'sm')}Sign in again</button>` : ''}<button data-retry="${m.id}">${ic('refresh', 'sm')}Retry</button>${m.status === 'signin' ? `<span class="hint" style="margin:0">Opens the sign-in page in your browser. Your message runs again when it works.</span>` : ''}</div>`;
   }
   const can = m.checkpoint && (m.files || []).length;
@@ -544,7 +568,7 @@ function msgHtml(m) {
   }
   else {
     const st = m.pending ? (m.waiting ? `<span class="st waiting">${(m.questions || []).some(q => q.status === 'pending') ? 'Question' : 'Needs OK'}</span>` : '<span class="st working">Working</span>')
-      : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout', 'signin', 'model'].includes(m.status) ? `<span class="st ${['signin', 'model'].includes(m.status) ? 'error' : m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : m.status === 'signin' ? 'Signed out' : m.status === 'model' ? 'Model refused' : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';
+      : m.undone ? '<span class="st">Undone</span>' : ['error', 'limited', 'timeout', 'signin', 'model', 'folder'].includes(m.status) ? `<span class="st ${['signin', 'model', 'folder'].includes(m.status) ? 'error' : m.status}">${m.status === 'limited' ? 'Limit hit' : m.status === 'timeout' ? 'Timed out' : m.status === 'signin' ? 'Signed out' : m.status === 'model' ? 'Model refused' : m.status === 'folder' ? (m.folderProblem === 'drive' ? 'Drive not connected' : m.folderProblem === 'denied' ? 'Folder blocked' : 'Folder missing') : 'Error'}</span>` : m.status === 'stopped' ? '<span class="st">Stopped</span>' : '';
     who = `${tile(m.agent, color)}<span class="handle" data-tip="${a ? esc(acctTitle(a)) : 'removed agent'}">@${m.agent}</span>${acct ? `<span class="acct">${esc(acct)}</span>` : ''}<span class="meta">${meta}</span>${m.branch ? `<span class="branchtag" data-tip="Worked on its own branch: ${esc(m.branch)}">${ic('branch', 'sm')}own branch</span>` : ''}<span class="state">${st}</span>`;
   }
   const copyBtn = (m.text || '').trim() && !(m.pending && !m.text) ? `<button class="copybtn msgcopy" data-copymsg="${m.id}" data-tip="Copy reply" aria-label="Copy this message">${ic('copy', 'sm')}</button>` : '';
@@ -631,7 +655,7 @@ function connect() {
     if (ev.type === 'status') { const was = running.length; running = ev.running || []; renderStatus(); loadSessions(); if (running.length < was) refreshOpenFile(); }
     if (ev.type === 'branches' && typeof refreshBranches === 'function') refreshBranches();
     if (ev.type === 'queue') { queue = ev.queue; renderStatus(); }
-    if (ev.type === 'session') { if (ev.reload) return openSession(current.id); Object.assign(current, ev.session); renderChips(); renderStatus(); if (typeof renderCtxBtn === 'function') renderCtxBtn(); if (typeof renderHandoffBtn === 'function') renderHandoffBtn(); if (typeof renderModeBtn === 'function') renderModeBtn(); }
+    if (ev.type === 'session') { if (ev.reload) return openSession(current.id); const fpWas = current.folderProblem; Object.assign(current, ev.session); if (fpWas !== current.folderProblem) renderFolderBanner(); renderChips(); renderStatus(); if (typeof renderCtxBtn === 'function') renderCtxBtn(); if (typeof renderHandoffBtn === 'function') renderHandoffBtn(); if (typeof renderModeBtn === 'function') renderModeBtn(); }
     if (ev.type === 'summarizing') { $('status').innerHTML = `Summarizing the earlier conversation with <b>@${esc(ev.by)}</b> so every agent keeps the full story…`; }
   };
 }
