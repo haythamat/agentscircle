@@ -670,6 +670,14 @@ function freshTool(agent) {
   return accounts.tool(agent);
 }
 
+// A user message that is a slash command after its @names, for tools that run slash commands
+// in print mode. Sent as is, without the chat context. Agents' hand-offs never count.
+function slashCommandFor(tool, msg) {
+  if (!tool.slashCommands || msg.role !== 'user') return null;
+  const rest = String(msg.text || '').replace(/^(\s*@[\w.-]+[,:]?)+\s*/, '');
+  return /^\/[A-Za-z]/.test(rest) ? rest : null;
+}
+
 function runAgent(s, agent, triggerMsg, hop = 0) {
   return new Promise((resolve) => {
     const tool = freshTool(agent);
@@ -697,7 +705,8 @@ function runAgent(s, agent, triggerMsg, hop = 0) {
     const ckBefore = checkpoints.snapshot(workdir, `refs/agentscircle/${s.id}/${runKey}-before`, `AgentsCircle: before @${agent.id}`);
 
     const circleTools = connectors.supports(tool) && !tool.noCircleTools;
-    let prompt = buildPrompt(s, agent, triggerMsg, wt, circleTools);
+    // "@claude /advisor opus": the tool only runs a slash command when it's the very first thing it gets.
+    let prompt = slashCommandFor(tool, triggerMsg) || buildPrompt(s, agent, triggerMsg, wt, circleTools);
     let promptFile = null;
     // Tools that take the prompt as an argument: very long prompts go through a file
     // (Windows limits command lines to about 32,000 characters).
