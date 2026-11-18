@@ -17,9 +17,7 @@ function readSkill(dir) {
   const file = path.join(dir, 'SKILL.md');
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
-  const fm = /^---\s*\n([\s\S]*?)\n---/.exec(text);
-  const meta = {};
-  if (fm) for (const line of fm[1].split('\n')) { const m = /^([a-zA-Z_-]+):\s*(.*)$/.exec(line); if (m) meta[m[1].toLowerCase()] = m[2].replace(/^["']|["']$/g, '').trim(); }
+  const meta = readSkillText(text);
   return { name: meta.name || path.basename(dir), description: (meta.description || text.replace(/^---[\s\S]*?---/, '').trim().split('\n').find((l) => l.trim() && !l.startsWith('#')) || '').slice(0, 300), dir, file };
 }
 
@@ -118,7 +116,12 @@ module.exports = function createSkills({ dataDir, accounts }) {
 function readSkillText(text) {
   const fm = /^---\s*\n([\s\S]*?)\n---/.exec(text);
   const meta = {};
-  if (fm) for (const line of fm[1].split('\n')) { const m = /^([a-zA-Z_-]+):\s*(.*)$/.exec(line); if (m) meta[m[1].toLowerCase()] = m[2].replace(/^["']|["']$/g, '').trim(); }
+  let key = null;
+  if (fm) for (const line of fm[1].split('\n')) {
+    const m = /^([a-zA-Z_-]+):\s*(.*)$/.exec(line);
+    if (m) { key = m[1].toLowerCase(); meta[key] = m[2].replace(/^["']|["']$/g, '').replace(/^[>|][+-]?$/, '').trim(); }
+    else if (key && /^\s+\S/.test(line)) meta[key] = `${meta[key]} ${line.trim()}`.trim(); // YAML block (`>` / `|`) continuation
+  }
   return meta;
 }
 function safeName(n) {
